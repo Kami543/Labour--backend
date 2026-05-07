@@ -1,0 +1,28 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Instalar dependências de build
+RUN apk add --no-cache python3 make g++ openssl
+
+# Copiar arquivos de dependência
+COPY package*.json ./
+COPY prisma ./prisma/
+
+# Instalar dependências
+RUN npm ci
+
+# Copiar código fonte
+COPY . .
+
+# Gerar Prisma Client
+RUN npx prisma generate
+
+# Build da aplicação
+RUN npm run build
+
+# Expor porta
+EXPOSE 3000
+
+# Comando para desenvolvimento com hot-reload
+CMD ["sh", "-c", "npx prisma generate && npm run start:dev"]

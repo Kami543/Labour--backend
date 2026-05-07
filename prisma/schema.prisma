@@ -1,0 +1,260 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────
+// ENUMS
+// ──────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+
+enum CategoriaProduto {
+  Feminino
+  Masculino
+  Acessorios
+}
+
+enum StatusPedido {
+  pendente
+  pagamento_confirmado
+  enviado
+  entregue
+  cancelado
+}
+
+enum TipoNotificacao {
+  promo
+  entrega
+  limitado
+  sistema
+}
+
+// ──────────────────────────────────────
+// USUÁRIO
+// ──────────────────────────────────────
+
+model User {
+  id              String            @id @default(cuid())
+  nome            String
+  role  Role   @default(USER)
+  email           String            @unique
+  cpf             String            @unique
+  endereco        Json              // 👈 Endereço como JSON
+  senha           String
+  
+  // Relacionamentos
+  carrinho        CartItem[]
+  pedidos         Pedido[]
+  notificacoes    Notificacao[]
+  metodosPagamento MetodoPagamento[]
+  avaliacoes      Avaliacao[]
+  refreshTokens   RefreshToken[]
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@map("users")
+}
+
+// ──────────────────────────────────────
+// PRODUTOS
+// ──────────────────────────────────────
+
+model Produto {
+  id            String           @id @default(cuid())
+  nome          String
+  slug          String?          @unique
+  descricao     String?
+  preco         Decimal          @db.Decimal(10, 2)
+  imagem        String
+  categoria     CategoriaProduto
+  tag           String?
+  estoque       Int              @default(0)
+  
+  // Cores e tamanhos como JSON
+  cores         Json             @default("[]")
+  tamanhos      Json             @default("[]")
+  
+  // Relacionamentos
+  cartItems     CartItem[]
+  pedidoItens   PedidoItem[]
+  avaliacoes    Avaliacao[]
+  
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([categoria])
+  @@index([tag])
+  @@index([createdAt])
+  @@map("produtos")
+}
+
+// ──────────────────────────────────────
+// CARRINHO
+// ──────────────────────────────────────
+
+model CartItem {
+  id         String   @id @default(cuid())
+  quantidade Int      @default(1)
+  tamanho    String?
+  cor        String?
+  
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  produtoId  String
+  produto    Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@unique([userId, produtoId, tamanho, cor])
+  @@index([userId])
+  @@index([produtoId])
+  @@map("cart_items")
+}
+
+// ──────────────────────────────────────
+// PEDIDOS
+// ──────────────────────────────────────
+
+model Pedido {
+  id              String         @id @default(cuid())
+  numero          String         @unique @default(cuid())
+  status          StatusPedido   @default(pendente)
+  subtotal        Decimal        @db.Decimal(10, 2)
+  frete           Decimal        @db.Decimal(10, 2) @default(0)
+  imposto         Decimal        @db.Decimal(10, 2) @default(0)
+  total           Decimal        @db.Decimal(10, 2)
+  
+  // Endereço de entrega como JSON
+  enderecoEntrega Json           // 👈 Endereço do pedido em JSON
+  
+  dataPagamento   DateTime?
+  dataEnvio       DateTime?
+  dataEntrega     DateTime?
+  codigoRastreio  String?
+  observacoes     String?
+  
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itens           PedidoItem[]
+  
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([numero])
+  @@map("pedidos")
+}
+
+// ──────────────────────────────────────
+// ITENS DO PEDIDO
+// ──────────────────────────────────────
+
+model PedidoItem {
+  id             String   @id @default(cuid())
+  quantidade     Int
+  precoUnitario  Decimal  @db.Decimal(10, 2)
+  tamanho        String?
+  cor            String?
+  
+  pedidoId       String
+  pedido         Pedido   @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  
+  produtoId      String
+  produto        Produto  @relation(fields: [produtoId], references: [id])
+  
+  @@map("pedido_itens")
+}
+
+// ──────────────────────────────────────
+// MÉTODOS DE PAGAMENTO
+// ──────────────────────────────────────
+
+model MetodoPagamento {
+  id               String   @id @default(cuid())
+  tipo             String
+  ultimosDigitos   String?
+  pagamentoDefault Boolean  @default(false)
+  
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt        DateTime @default(now())
+  
+  @@map("metodos_pagamento")
+}
+
+// ──────────────────────────────────────
+// AVALIAÇÕES
+// ──────────────────────────────────────
+
+model Avaliacao {
+  id          String   @id @default(cuid())
+  nota        Int
+  titulo      String?
+  comentario  String?
+  
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  produtoId   String
+  produto     Produto  @relation(fields: [produtoId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  
+  @@unique([userId, produtoId])
+  @@index([produtoId, nota])
+  @@map("avaliacoes")
+}
+
+// ──────────────────────────────────────
+// NOTIFICAÇÕES
+// ──────────────────────────────────────
+
+model Notificacao {
+  id        String           @id @default(cuid())
+  tipo      TipoNotificacao
+  titulo    String
+  mensagem  String
+  lida      Boolean          @default(false)
+  
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([lida])
+  @@index([createdAt])
+  @@map("notificacoes")
+}
+
+// ──────────────────────────────────────
+// REFRESH TOKENS
+// ──────────────────────────────────────
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  
+  @@map("refresh_tokens")
+}
