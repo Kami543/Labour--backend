@@ -1,8 +1,11 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import * as bcrypt from 'bcrypt';
+import NodeCache from 'node-cache';
+
+const cache = new NodeCache({ stdTTL: 300 }); // 5 minutos
 
 @Injectable()
 export class AuthService {
@@ -12,43 +15,48 @@ export class AuthService {
   ) {}
 
   async register(data: RegisterDto) {
-    const userExists = await this.prisma.user.findUnique({
-      where: { email: data.email },
-    });
+    try {
+      const userExists = await this.prisma.user.findUnique({
+        where: { email: data.email },
+      });
+      if (userExists) throw new ConflictException('E-mail já cadastrado');
 
-    if (userExists) {
-      throw new ConflictException('E-mail já cadastrado');
+      const hashedPassword = await bcrypt.hash(data.senha, 10);
+      const user = await this.prisma.user.create({
+        data: {
+          ...data,
+          senha: hashedPassword,
+          role: 'USER',
+        },
+      });
+      return this.generateToken(user);
+    } catch (error) {
+      this.handlePrismaError(error);
     }
-
-    const hashedPassword = await bcrypt.hash(data.senha, 10);
-
-    const user = await this.prisma.user.create({
-      data: {
-        ...data,
-        senha: hashedPassword,
-        role: 'USER',
-      },
-    });
-
-    return this.generateToken(user);
   }
 
   async login(data: LoginDto) {
-    const user = await this.prisma.user.findUnique({
-      where: { email: data.email },
-    });
+    try {
+      let user = cache.get<{ id: string; email: string; nome: string; senha: string; role: string }>(`user:${data.email}`);
+      if (!user) {
+        const dbUser = await this.prisma.user.findUnique({
+          where: { email: data.email },
+        });
+        if (dbUser) {
+          user = dbUser;
+          cache.set(`user:${data.email}`, user);
+        }
+      }
 
-    if (!user) {
-      throw new UnauthorizedException('Credenciais inválidas');
+      if (!user) throw new UnauthorizedException('Credenciais inválidas');
+
+      const isPasswordValid = await bcrypt.compare(data.senha, user.senha);
+      if (!isPasswordValid) throw new UnauthorizedException('Credenciais inválidas');
+
+      return this.generateToken(user);
+    } catch (error) {
+      this.handlePrismaError(error);
     }
-
-    const isPasswordValid = await bcrypt.compare(data.senha, user.senha);
-
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Credenciais inválidas');
-    }
-
-    return this.generateToken(user);
   }
 
   private generateToken(user: any) {
@@ -62,5 +70,12 @@ export class AuthService {
         role: user.role,
       },
     };
+  }
+
+  private handlePrismaError(error: any) {
+    if (error?.code === 'P2024') {
+      throw new ServiceUnavailableException('Serviço temporariamente ocupado. Tente novamente.');
+    }
+    throw error;
   }
 }

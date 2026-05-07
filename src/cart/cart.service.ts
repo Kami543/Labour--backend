@@ -1,9 +1,9 @@
 // src/modules/cart/cart.service.ts
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { CartRepository } from './cart.repository';
-import { ProdutoRepository } from '../produtos/produto.repository';
-import { AddToCartDto } from './dto/add-to-cart.dto';
-import { UpdateCartItemDto } from './dto/update-cart-item.dto';
+import { ProdutoRepository } from '../produto/produto.repository';
+import { AddToCartDto } from './dto/cart.dto';
+import { UpdateCartItemDto } from './dto/cart.dto';
 
 @Injectable()
 export class CartService {
@@ -39,17 +39,22 @@ export class CartService {
       if (produto.estoque < novaQuantidade) {
         throw new BadRequestException('Estoque insuficiente');
       }
-      return this.cartRepository.updateQuantidade(existingItem.id, novaQuantidade);
+      await this.cartRepository.updateQuantidade(existingItem.id, novaQuantidade);
+      // Retorna o carrinho completo após atualizar
+      return this.getCart(userId);
     }
 
     // Adiciona novo item
-    return this.cartRepository.addItem({
+    await this.cartRepository.addItem({
       userId,
       produtoId,
       quantidade,
       tamanho,
       cor,
     });
+    
+    // Retorna o carrinho completo
+    return this.getCart(userId);
   }
 
   async getCart(userId: string) {
@@ -61,11 +66,25 @@ export class CartService {
 
     const itemCount = cartItems.reduce((sum, item) => sum + item.quantidade, 0);
 
-    return {
-      items: cartItems,
-      total,
-      itemCount,
-    };
+    // 🔥 Retorna os items formatados como array (igual ao frontend espera)
+    const formattedItems = cartItems.map(item => ({
+      id: item.id,
+      quantidade: item.quantidade,
+      tamanho: item.tamanho,
+      cor: item.cor,
+      produto: {
+        id: item.produto.id,
+        nome: item.produto.nome,
+        preco: Number(item.produto.preco),
+        imagem: item.produto.imagem,
+        categoria: item.produto.categoria,
+      }
+    }));
+
+    // 🔥 Se o frontend espera array diretamente, retorne o array
+    // Se espera objeto com items, descomente a linha abaixo e comente a outra
+    return formattedItems; // ← Retorna array diretamente (Recomendado)
+    // return { items: formattedItems, total, itemCount }; ← Alternativa
   }
 
   async updateCartItem(userId: string, itemId: string, updateDto: UpdateCartItemDto) {
@@ -78,7 +97,8 @@ export class CartService {
     }
 
     if (quantidade <= 0) {
-      return this.removeFromCart(userId, itemId);
+      await this.removeFromCart(userId, itemId);
+      return this.getCart(userId);
     }
 
     // Verifica estoque
@@ -86,7 +106,8 @@ export class CartService {
       throw new BadRequestException('Estoque insuficiente');
     }
 
-    return this.cartRepository.updateQuantidade(itemId, quantidade);
+    await this.cartRepository.updateQuantidade(itemId, quantidade);
+    return this.getCart(userId);
   }
 
   async removeFromCart(userId: string, itemId: string) {
@@ -96,12 +117,12 @@ export class CartService {
     }
 
     await this.cartRepository.removeItem(itemId);
-    return { message: 'Item removido do carrinho' };
+    return this.getCart(userId); // ← Retorna carrinho atualizado
   }
 
   async clearCart(userId: string) {
     await this.cartRepository.clearCart(userId);
-    return { message: 'Carrinho limpo com sucesso' };
+    return this.getCart(userId); // ← Retorna carrinho vazio
   }
 
   async getCartItemCount(userId: string) {

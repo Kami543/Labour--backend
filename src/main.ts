@@ -1,51 +1,70 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { PrismaClient } from '@prisma/client';
 import { AppModule } from './app/app.module';
-import { seedDatabase } from './seed/seed'; // Importar a função de seed
+import { seedDatabase } from './seed/seed';
 
-async function findAvailablePort(startPort: number, maxAttempts: number = 10): Promise<number> {
+// ──────────────────────────────────────────────────────────────
+// Utilitário: Encontrar porta disponível
+// ──────────────────────────────────────────────────────────────
+async function encontrarPortaDisponivel(
+  portaInicial: number,
+  tentativasMaximas: number = 10,
+): Promise<number> {
   const net = require('net');
-  
-  for (let i = 0; i < maxAttempts; i++) {
-    const port = startPort + i;
-    
-    try {
-      const isAvailable = await new Promise<boolean>((resolve) => {
-        const server = net.createServer();
-        
-        server.once('error', (err: any) => {
-          if (err.code === 'EADDRINUSE') {
-            resolve(false);
-          } else {
-            resolve(false);
-          }
-        });
-        
-        server.once('listening', () => {
-          server.close();
-          resolve(true);
-        });
-        
-        server.listen(port);
+
+  for (let i = 0; i < tentativasMaximas; i++) {
+    const porta = portaInicial + i;
+
+    const disponivel = await new Promise<boolean>((resolve) => {
+      const servidor = net.createServer();
+
+      servidor.once('error', () => resolve(false));
+      servidor.once('listening', () => {
+        servidor.close();
+        resolve(true);
       });
-      
-      if (isAvailable) {
-        return port;
-      }
-      
-      console.log(`⚠️ Porta ${port} está ocupada, tentando ${port + 1}...`);
-    } catch (error) {
-      console.log(`⚠️ Erro ao verificar porta ${port}: ${error.message}`);
-    }
+
+      servidor.listen(porta);
+    });
+
+    if (disponivel) return porta;
+
+    console.log(`⚠️  Porta ${porta} está ocupada, tentando ${porta + 1}...`);
   }
-  
-  throw new Error(`Não foi possível encontrar uma porta disponível após ${maxAttempts} tentativas`);
+
+  throw new Error(
+    `Não foi possível encontrar uma porta disponível após ${tentativasMaximas} tentativas`,
+  );
 }
 
+// ──────────────────────────────────────────────────────────────
+// Utilitário: Verificar se o banco já foi semeado
+// ──────────────────────────────────────────────────────────────
+async function isDatabaseSeeded(): Promise<boolean> {
+  const prisma = new PrismaClient();
+  try {
+    const count = await prisma.user.count();
+    return count > 0;
+  } catch {
+    return false;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Bootstrap
+// ──────────────────────────────────────────────────────────────
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  const logger = new Logger('Bootstrap');
+  const app = await NestFactory.create(AppModule, {
+    // OBRIGATÓRIO para verificação de assinatura HMAC do webhook MercadoPago.
+    // Sem isso, req.rawBody fica undefined e a validação sempre falha.
+    rawBody: true,
+  });
+
+  const logger = new Logger('Inicializacao');
 
   // Validação global
   app.useGlobalPipes(
@@ -65,13 +84,25 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // Prefix de API
+  // Prefixo global da API
   app.setGlobalPrefix('api');
 
-  // Configuração do Swagger
+  // ──────────────────────────────────────────────────────────────
+  // Swagger
+  // ──────────────────────────────────────────────────────────────
   const config = new DocumentBuilder()
-    .setTitle('API Documentation')
-    .setDescription('API Documentation for User and Product')
+    .setTitle('Documentação da API')
+    .setDescription(`
+      ## Documentação da API para Sistema de E-commerce
+
+      ### Funcionalidades:
+      - Gerenciamento de usuários (autenticação, perfil)
+      - Gerenciamento de produtos (operações CRUD)
+      - Operações de carrinho de compras
+      - Processamento de pedidos
+      - Integração de pagamento
+      - Sistema de notificações
+    `)
     .setVersion('1.0')
     .addBearerAuth(
       {
@@ -79,48 +110,91 @@ async function bootstrap() {
         scheme: 'bearer',
         bearerFormat: 'JWT',
         name: 'JWT',
-        description: 'Enter JWT token',
+        description: 'Digite o token JWT',
         in: 'header',
       },
       'access-token',
     )
-    .addTag('Users', 'Endpoints de usuários')
-    .addTag('Products', 'Endpoints de produtos')
+    .addTag('Auth', 'Endpoints de autenticação - Login, Registro, Sair')
+    .addTag('Users', 'Gerenciamento de usuários - Perfil, Atualizar, Deletar')
+    .addTag('Produtos', 'Catálogo de produtos - Listar, Buscar, Detalhes')
+    .addTag('Carrinho', 'Carrinho de compras - Adicionar, Remover, Finalizar')
+    .addTag('Pedidos', 'Gerenciamento de pedidos - Criar, Rastrear, Cancelar')
+    .addTag('Pagamento', 'Processamento de pagamento - PIX, Boleto, Cartão')
+    .addTag('Notificacoes', 'Notificações do usuário - Ler, Deletar')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
 
-  const desiredPort = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-  const maxAttempts = parseInt(process.env.MAX_PORT_ATTEMPTS || '10');
-  
-  let PORT: number;
-  
+  SwaggerModule.setup('api/docs', app, document, {
+    swaggerOptions: {
+      persistAuthorization: true,
+      tagsSorter: 'alpha',
+      operationsSorter: 'alpha',
+      docExpansion: 'none',
+      filter: true,
+      showExtensions: true,
+      showCommonExtensions: true,
+      tryItOutEnabled: true,
+    },
+    customCss: `
+      .swagger-ui .topbar { background-color: #1e3a8a; }
+      .swagger-ui .topbar .download-url-wrapper .select-label select { border-color: #1e3a8a; }
+      .swagger-ui .info .title { color: #1e3a8a; }
+      .swagger-ui .btn.authorize { border-color: #1e3a8a; color: #1e3a8a; }
+      .swagger-ui .btn.authorize svg { fill: #1e3a8a; }
+    `,
+    customSiteTitle: 'Documentação da API de E-commerce',
+  });
+
+  // ──────────────────────────────────────────────────────────────
+  // Porta
+  // ──────────────────────────────────────────────────────────────
+  const portaDesejada = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  const tentativasMaximas = parseInt(process.env.MAX_PORT_ATTEMPTS || '10');
+
+  let PORTA: number;
+
   try {
-    PORT = await findAvailablePort(desiredPort, maxAttempts);
-  } catch (error) {
-    logger.error(`❌ ${error.message}`);
+    PORTA = await encontrarPortaDisponivel(portaDesejada, tentativasMaximas);
+  } catch (erro) {
+    logger.error(`❌ ${erro.message}`);
     process.exit(1);
   }
 
-  // Executar o seed do banco de dados
-  try {
-    await seedDatabase();
-    logger.log('🌱 Database seeded successfully!');
-  } catch (error) {
-    logger.error('❌ Database seeding failed:', error);
-    process.exit(1);
+  // ──────────────────────────────────────────────────────────────
+  // Seed — apenas em desenvolvimento e somente se ainda não foi feito
+  // ──────────────────────────────────────────────────────────────
+  if (process.env.NODE_ENV === 'development') {
+    try {
+      const jaFoiSemeado = await isDatabaseSeeded();
+
+      if (jaFoiSemeado) {
+        logger.log('🌱 Banco já foi semeado, pulando...');
+      } else {
+        await seedDatabase();
+        logger.log('🌱 Banco de dados semeado com sucesso!');
+      }
+    } catch (erro) {
+      logger.warn(`⚠️  Seed falhou (servidor continuará): ${erro.message}`);
+    }
   }
 
-  await app.listen(PORT);
+  // ──────────────────────────────────────────────────────────────
+  // Start
+  // ──────────────────────────────────────────────────────────────
+  await app.listen(PORTA);
 
-  logger.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
-  logger.log(`📚 Swagger disponível em http://localhost:${PORT}/api/docs`);
-  logger.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-  logger.log(`📁 API prefix: /api`);
-  
-  if (PORT !== desiredPort) {
-    logger.warn(`⚠️ Porta ${desiredPort} estava ocupada, usando porta ${PORT} como fallback`);
+  logger.log(`🚀 Servidor rodando em http://localhost:${PORTA}`);
+  logger.log(`📚 Swagger disponível em http://localhost:${PORTA}/api/docs`);
+  logger.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'desenvolvimento'}`);
+  logger.log(`📁 Prefixo da API: /api`);
+  logger.log(`🔔 Webhook MercadoPago: http://localhost:${PORTA}/api/pagamento/webhook/mercadopago`);
+
+  if (PORTA !== portaDesejada) {
+    logger.warn(
+      `⚠️  Porta ${portaDesejada} estava ocupada, usando porta ${PORTA} como fallback`,
+    );
   }
 }
 

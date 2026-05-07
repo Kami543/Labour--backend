@@ -26,7 +26,7 @@ import { ProdutoService } from './produto.service';
 import { CreateProdutoDto, UpdateProdutoDto } from './dto/produto.dto';
 
 @ApiBearerAuth('access-token')
-@ApiTags('Products')
+@ApiTags('Produtos')
 @Controller('products')
 export class ProdutoController {
   private readonly logger = new Logger(ProdutoController.name);

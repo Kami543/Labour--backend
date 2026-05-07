@@ -1,4 +1,3 @@
-// src/modules/cart/cart.controller.ts
 import {
   Controller,
   Get,
@@ -8,173 +7,75 @@ import {
   Body,
   Param,
   UseGuards,
-  Req,
   HttpCode,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiBearerAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
-  ApiParam,
-} from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { CartService } from './cart.service';
-import { AddToCartDto } from './dto/cart.dto';
-import { UpdateCartItemDto } from './dto/cart.dto';
-import { AuthGuard } from '@nestjs/passport';
+import { AddToCartDto, UpdateCartItemDto } from './dto/cart.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard'; 
+import { CurrentUser } from '../common/decorators/current-user.decorator'; 
 
 @ApiTags('Carrinho')
-@ApiBearerAuth()
+@ApiBearerAuth('access-token')
 @Controller('cart')
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(JwtAuthGuard)
 export class CartController {
+  private readonly logger = new Logger(CartController.name);
+
   constructor(private readonly cartService: CartService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Listar todos os itens do carrinho' })
-  @ApiResponse({
-    status: 200,
-    description: 'Carrinho retornado com sucesso',
-    schema: {
-      example: {
-        items: [
-          {
-            id: 'cart_item_id',
-            quantidade: 2,
-            tamanho: 'M',
-            cor: 'Preto',
-            produto: {
-              id: 'produto_id',
-              nome: 'Camiseta Masculina',
-              preco: 59.90,
-              imagem: 'https://example.com/camiseta.jpg',
-              slug: 'camiseta-masculina',
-              estoque: 100
-            },
-            createdAt: '2024-01-01T00:00:00.000Z'
-          }
-        ],
-        total: 119.80,
-        itemCount: 2
-      }
-    }
-  })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  async getCart(@Req() req: any) {
-    const userId = req.user.userId;
-    return this.cartService.getCart(userId);
+  @ApiOperation({ summary: 'Listar itens do carrinho' })
+  async getCart(@CurrentUser('sub') userId: string) {
+    this.logger.log(`Buscando carrinho do usuário: ${userId}`);
+    const cart = await this.cartService.getCart(userId);
+    this.logger.log(`Encontrados ${cart.length} itens`);
+    return cart;
   }
 
   @Get('count')
-  @ApiOperation({ summary: 'Obter quantidade total de itens no carrinho' })
-  @ApiResponse({
-    status: 200,
-    description: 'Quantidade retornada com sucesso',
-    schema: {
-      example: { count: 3 }
-    }
-  })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  async getCartItemCount(@Req() req: any) {
-    const userId = req.user.userId;
-    return this.cartService.getCartItemCount(userId);
+  @ApiOperation({ summary: 'Quantidade de itens' })
+  async getCartItemCount(@CurrentUser('sub') userId: string) {
+    const result = await this.cartService.getCartItemCount(userId);
+    const count = typeof result === 'number' ? result : result.count;
+    return { count };
   }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: 'Adicionar produto ao carrinho' })
-  @ApiBody({ type: AddToCartDto })
-  @ApiResponse({
-    status: 201,
-    description: 'Produto adicionado ao carrinho com sucesso',
-    schema: {
-      example: {
-        id: 'cart_item_id',
-        quantidade: 2,
-        tamanho: 'M',
-        cor: 'Preto',
-        userId: 'user_id',
-        produtoId: 'produto_id',
-        produto: {
-          id: 'produto_id',
-          nome: 'Camiseta Masculina',
-          preco: 59.90,
-          imagem: 'https://example.com/camiseta.jpg',
-          slug: 'camiseta-masculina',
-          estoque: 100
-        },
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z'
-      }
-    }
-  })
-  @ApiResponse({ status: 400, description: 'Estoque insuficiente ou dados inválidos' })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  @ApiResponse({ status: 404, description: 'Produto não encontrado' })
-  async addToCart(@Req() req: any, @Body() addToCartDto: AddToCartDto) {
-    const userId = req.user.userId;
-    return this.cartService.addToCart(userId, addToCartDto);
+  async addToCart(@CurrentUser('sub') userId: string, @Body() dto: AddToCartDto) {
+    this.logger.log(`Adicionando produto ${dto.produtoId} ao carrinho`);
+    await this.cartService.addToCart(userId, dto);
+    
+    // Retorna o carrinho completo atualizado
+    const updatedCart = await this.cartService.getCart(userId);
+    this.logger.log(`Carrinho agora tem ${updatedCart.length} itens`);
+    return updatedCart;
   }
 
   @Put(':itemId')
-  @ApiOperation({ summary: 'Atualizar quantidade de um item no carrinho' })
-  @ApiParam({ name: 'itemId', description: 'ID do item do carrinho', type: String })
-  @ApiBody({ type: UpdateCartItemDto })
-  @ApiResponse({
-    status: 200,
-    description: 'Item atualizado com sucesso',
-    schema: {
-      example: {
-        id: 'cart_item_id',
-        quantidade: 3,
-        tamanho: 'M',
-        cor: 'Preto',
-        userId: 'user_id',
-        produtoId: 'produto_id',
-        produto: {
-          id: 'produto_id',
-          nome: 'Camiseta Masculina',
-          preco: 59.90,
-          imagem: 'https://example.com/camiseta.jpg'
-        },
-        createdAt: '2024-01-01T00:00:00.000Z',
-        updatedAt: '2024-01-01T00:00:00.000Z'
-      }
-    }
-  })
-  @ApiResponse({ status: 400, description: 'Estoque insuficiente ou quantidade inválida' })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  @ApiResponse({ status: 404, description: 'Item do carrinho não encontrado' })
+  @ApiOperation({ summary: 'Atualizar quantidade do item' })
   async updateCartItem(
-    @Req() req: any,
+    @CurrentUser('sub') userId: string,
     @Param('itemId') itemId: string,
-    @Body() updateCartItemDto: UpdateCartItemDto,
+    @Body() dto: UpdateCartItemDto,
   ) {
-    const userId = req.user.userId;
-    return this.cartService.updateCartItem(userId, itemId, updateCartItemDto);
+    this.logger.log(`Atualizando item ${itemId}`);
+    await this.cartService.updateCartItem(userId, itemId, dto);
+    
+    const updatedCart = await this.cartService.getCart(userId);
+    return updatedCart;
   }
 
   @Delete(':itemId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Remover item específico do carrinho' })
-  @ApiParam({ name: 'itemId', description: 'ID do item do carrinho', type: String })
-  @ApiResponse({ status: 204, description: 'Item removido com sucesso' })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  @ApiResponse({ status: 404, description: 'Item do carrinho não encontrado' })
-  async removeFromCart(@Req() req: any, @Param('itemId') itemId: string) {
-    const userId = req.user.userId;
-    return this.cartService.removeFromCart(userId, itemId);
-  }
-
-  @Delete()
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Limpar carrinho completo' })
-  @ApiResponse({ status: 204, description: 'Carrinho limpo com sucesso' })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  async clearCart(@Req() req: any) {
-    const userId = req.user.userId;
-    return this.cartService.clearCart(userId);
+  async removeFromCart(@CurrentUser('sub') userId: string, @Param('itemId') itemId: string) {
+    this.logger.log(`Removendo item ${itemId} do carrinho`);
+    await this.cartService.removeFromCart(userId, itemId);
+    
+    const updatedCart = await this.cartService.getCart(userId);
+    return updatedCart;
   }
 }

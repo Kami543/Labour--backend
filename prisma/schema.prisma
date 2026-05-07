@@ -1,5 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// schema.prisma
 
 generator client {
   provider = "prisma-client-js"
@@ -19,7 +18,6 @@ enum Role {
   ADMIN
 }
 
-
 enum CategoriaProduto {
   Feminino
   Masculino
@@ -34,11 +32,38 @@ enum StatusPedido {
   cancelado
 }
 
+enum StatusTransacao {
+  AGUARDANDO_PAGAMENTO
+  PAGO
+  FALHOU
+  REEMBOLSADO
+  CANCELADO
+  EM_ANALISE
+  CHARGEBACK
+}
+
+enum TipoPagamento {
+  CARTAO_CREDITO
+  CARTAO_DEBITO
+  PIX
+  BOLETO
+  TRANSFERENCIA
+}
+
 enum TipoNotificacao {
   promo
   entrega
   limitado
   sistema
+  pagamento
+}
+
+enum GatewayPagamento {
+  MERCADO_PAGO
+  STRIPE
+  PAGSEGURO
+  PIX_DIRETO
+  BOLETO_DIRETO
 }
 
 // ──────────────────────────────────────
@@ -46,13 +71,25 @@ enum TipoNotificacao {
 // ──────────────────────────────────────
 
 model User {
-  id              String            @id @default(cuid())
+  id              String            @id @default(uuid())
   nome            String
-  role  Role   @default(USER)
+  role            Role              @default(USER)
   email           String            @unique
   cpf             String            @unique
-  endereco        Json              // 👈 Endereço como JSON
+  endereco        Json
   senha           String
+  
+  // Configurações de segurança
+  twoFactorSecret String?
+  twoFactorEnabled Boolean           @default(false)
+  emailVerified   Boolean           @default(false)
+  phoneVerified   Boolean           @default(false)
+  
+  // Rate limiting e segurança
+  failedLoginAttempts Int           @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  lastLoginIp      String?
   
   // Relacionamentos
   carrinho        CartItem[]
@@ -61,10 +98,15 @@ model User {
   metodosPagamento MetodoPagamento[]
   avaliacoes      Avaliacao[]
   refreshTokens   RefreshToken[]
+  pagamentos      Pagamento[]
+  transacoes      Transacao[]
+  deviceFingerprints DeviceFingerprint[]
   
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
+  @@index([email])
+  @@index([cpf])
   @@map("users")
 }
 
@@ -73,7 +115,7 @@ model User {
 // ──────────────────────────────────────
 
 model Produto {
-  id            String           @id @default(cuid())
+  id            String           @id @default(uuid())
   nome          String
   slug          String?          @unique
   descricao     String?
@@ -83,7 +125,6 @@ model Produto {
   tag           String?
   estoque       Int              @default(0)
   
-  // Cores e tamanhos como JSON
   cores         Json             @default("[]")
   tamanhos      Json             @default("[]")
   
@@ -106,7 +147,7 @@ model Produto {
 // ──────────────────────────────────────
 
 model CartItem {
-  id         String   @id @default(cuid())
+  id         String   @id @default(uuid())
   quantidade Int      @default(1)
   tamanho    String?
   cor        String?
@@ -131,7 +172,7 @@ model CartItem {
 // ──────────────────────────────────────
 
 model Pedido {
-  id              String         @id @default(cuid())
+  id              String         @id @default(uuid())
   numero          String         @unique @default(cuid())
   status          StatusPedido   @default(pendente)
   subtotal        Decimal        @db.Decimal(10, 2)
@@ -139,8 +180,7 @@ model Pedido {
   imposto         Decimal        @db.Decimal(10, 2) @default(0)
   total           Decimal        @db.Decimal(10, 2)
   
-  // Endereço de entrega como JSON
-  enderecoEntrega Json           // 👈 Endereço do pedido em JSON
+  enderecoEntrega Json
   
   dataPagamento   DateTime?
   dataEnvio       DateTime?
@@ -151,6 +191,8 @@ model Pedido {
   userId          String
   user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   itens           PedidoItem[]
+  pagamentos      Pagamento[]
+  transacoes      Transacao[]
   
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
@@ -167,7 +209,7 @@ model Pedido {
 // ──────────────────────────────────────
 
 model PedidoItem {
-  id             String   @id @default(cuid())
+  id             String   @id @default(uuid())
   quantidade     Int
   precoUnitario  Decimal  @db.Decimal(10, 2)
   tamanho        String?
@@ -183,21 +225,205 @@ model PedidoItem {
 }
 
 // ──────────────────────────────────────
-// MÉTODOS DE PAGAMENTO
+// MÉTODOS DE PAGAMENTO (Seguro)
 // ──────────────────────────────────────
 
 model MetodoPagamento {
-  id               String   @id @default(cuid())
-  tipo             String
-  ultimosDigitos   String?
-  pagamentoDefault Boolean  @default(false)
+  id                   String   @id @default(uuid())
+  tipo                 TipoPagamento
+  ultimosDigitos       String?
+  pagamentoDefault     Boolean  @default(false)
   
-  userId           String
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Dados criptografados
+  dadosCriptografados  Json?    // Dados do cartão criptografados
+  tokenCard           String?   @unique // Token do cartão (PCI compliant)
+  tokenProvider       String?   // Stripe, MercadoPago, etc
   
-  createdAt        DateTime @default(now())
+  // Para PIX
+  pixKey              String?   // Chave PIX criptografada
   
+  userId               String
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Metadados de segurança
+  deviceFingerprint   String?
+  ipAddress           String?
+  userAgent           String?
+  lastUsedAt          DateTime?
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  @@index([userId, pagamentoDefault])
+  @@index([tokenCard])
   @@map("metodos_pagamento")
+}
+
+// ──────────────────────────────────────
+// TRANSAÇÕES (Core do sistema de pagamento)
+// ──────────────────────────────────────
+
+model Transacao {
+  id                  String         @id @default(uuid())
+  transactionId       String         @unique  // ID do gateway
+  gateway             GatewayPagamento
+  tipo                TipoPagamento
+  valor               Decimal        @db.Decimal(10, 2)
+  status              StatusTransacao @default(AGUARDANDO_PAGAMENTO)
+  
+  // Para PIX
+  // Para PIX
+  pixQrCode           String?        @db.Text  // QR Code base64
+  pixQrCodeText       String?        @db.Text  // Código copia e cola
+  pixExpiration       DateTime?       // Expiração do PIX
+  
+  // Para Boleto
+  boletoUrl           String?
+  boletoBarcode       String?
+  boletoExpiration    DateTime?
+  
+  // Para Cartão
+  cardBrand           String?
+  installmentCount    Int?           @default(1)
+  installmentValue    Decimal?       @db.Decimal(10, 2)
+  
+  // Dados do pagamento
+  paymentData         Json?          // Dados adicionais do gateway
+  metadata            Json?          // Metadados diversos
+  
+  // Webhooks e segurança
+  webhookUrl          String?
+  webhookSent         Boolean        @default(false)
+  webhookResponse     Json?
+  retryCount          Int            @default(0)
+  
+  // Prevenção de fraude
+  fraudScore          Float?         // Score de fraude (0-1)
+  fraudAnalysis       Json?          // Análise detalhada
+  riskLevel           String?        // BAIXO, MEDIO, ALTO, CRITICO
+  
+  // Relacionamentos
+  pedidoId            String
+  pedido              Pedido         @relation(fields: [pedidoId], references: [id])
+  userId              String
+  user                User           @relation(fields: [userId], references: [id])
+  pagamento           Pagamento?     @relation
+  chargebacks         Chargeback[]
+  webhookLogs         WebhookLog[]
+  
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  paidAt              DateTime?
+  refundedAt          DateTime?
+  cancelledAt         DateTime?
+
+  @@index([status])
+  @@index([transactionId])
+  @@index([pedidoId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([fraudScore])
+  @@map("transacoes")
+}
+
+// ──────────────────────────────────────
+// PAGAMENTOS (Histórico)
+// ──────────────────────────────────────
+
+model Pagamento {
+  id                String        @id @default(uuid())
+  transacaoId       String        @unique
+  transacao         Transacao     @relation(fields: [transacaoId], references: [id])
+  pedidoId          String
+  pedido            Pedido        @relation(fields: [pedidoId], references: [id])
+  userId            String
+  user              User          @relation(fields: [userId], references: [id])
+  
+  valor             Decimal       @db.Decimal(10, 2)
+  tipo              TipoPagamento
+  status            StatusTransacao
+  gateway           GatewayPagamento
+  
+  // Detalhes do pagamento
+  paymentDetails    Json?
+  receiptUrl        String?
+  invoiceUrl        String?
+  
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([pedidoId])
+  @@index([userId])
+  @@index([status])
+  @@map("pagamentos")
+}
+
+// ──────────────────────────────────────
+// CHARGEBACKS (Contestações)
+// ──────────────────────────────────────
+
+model Chargeback {
+  id                String        @id @default(uuid())
+  transacaoId       String
+  transacao         Transacao     @relation(fields: [transacaoId], references: [id])
+  motivo            String
+  valor             Decimal       @db.Decimal(10, 2)
+  status            String        // ABERTO, EM_ANALISE, APROVADO, NEGADO
+  evidencias        Json?
+  dataAbertura      DateTime      @default(now())
+  dataResolucao     DateTime?
+  
+  @@map("chargebacks")
+}
+
+// ──────────────────────────────────────
+// LOGS DE WEBHOOK
+// ──────────────────────────────────────
+
+model WebhookLog {
+  id                String        @id @default(uuid())
+  transacaoId       String
+  transacao         Transacao     @relation(fields: [transacaoId], references: [id])
+  url               String
+  payload           Json
+  response          Json?
+  statusCode        Int
+  attemptCount      Int
+  error             String?
+  createdAt         DateTime      @default(now())
+  
+  @@index([transacaoId])
+  @@index([createdAt])
+  @@map("webhook_logs")
+}
+
+// ──────────────────────────────────────
+// FINGERPRINT DE DISPOSITIVO (Anti-fraude)
+// ──────────────────────────────────────
+
+model DeviceFingerprint {
+  id                String        @id @default(uuid())
+  userId            String
+  user              User          @relation(fields: [userId], references: [id])
+  
+  fingerprint       String        @unique
+  ipAddress         String
+  userAgent         String
+  acceptLanguage    String?
+  platform          String?
+  screenResolution  String?
+  timezone          String?
+  
+  // Metadados
+  isTrusted         Boolean       @default(false)
+  trustScore        Float         @default(0)
+  lastSeenAt        DateTime      @default(now())
+  
+  createdAt         DateTime      @default(now())
+  
+  @@index([userId])
+  @@index([fingerprint])
+  @@map("device_fingerprints")
 }
 
 // ──────────────────────────────────────
@@ -205,7 +431,7 @@ model MetodoPagamento {
 // ──────────────────────────────────────
 
 model Avaliacao {
-  id          String   @id @default(cuid())
+  id          String   @id @default(uuid())
   nota        Int
   titulo      String?
   comentario  String?
@@ -227,7 +453,7 @@ model Avaliacao {
 // ──────────────────────────────────────
 
 model Notificacao {
-  id        String           @id @default(cuid())
+  id        String           @id @default(uuid())
   tipo      TipoNotificacao
   titulo    String
   mensagem  String
@@ -249,7 +475,7 @@ model Notificacao {
 // ──────────────────────────────────────
 
 model RefreshToken {
-  id        String   @id @default(cuid())
+  id        String   @id @default(uuid())
   token     String   @unique
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -257,4 +483,29 @@ model RefreshToken {
   revoked   Boolean  @default(false)
   
   @@map("refresh_tokens")
+}
+
+// ──────────────────────────────────────
+// LOGS DE SEGURANÇA
+// ──────────────────────────────────────
+
+model SecurityLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String
+  entityType  String
+  entityId    String?
+  details     Json?
+  ipAddress   String
+  userAgent   String
+  status      String   // SUCCESS, FAILURE, BLOCKED
+  severity    String   // LOW, MEDIUM, HIGH, CRITICAL
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([severity])
+  @@map("security_logs")
 }
