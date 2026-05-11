@@ -1,201 +1,220 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import { PrismaClient } from '@prisma/client';
 import { AppModule } from './app/app.module';
-import { seedDatabase } from './seed/seed';
+import { ExpressAdapter } from '@nestjs/platform-express';
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+import * as fs from 'fs';
+import express from 'express';
 
-// ──────────────────────────────────────────────────────────────
-// Utilitário: Encontrar porta disponível
-// ──────────────────────────────────────────────────────────────
-async function encontrarPortaDisponivel(
-  portaInicial: number,
-  tentativasMaximas: number = 10,
-): Promise<number> {
-  const net = require('net');
+let cachedServer: any;
 
-  for (let i = 0; i < tentativasMaximas; i++) {
-    const porta = portaInicial + i;
-
-    const disponivel = await new Promise<boolean>((resolve) => {
-      const servidor = net.createServer();
-
-      servidor.once('error', () => resolve(false));
-      servidor.once('listening', () => {
-        servidor.close();
-        resolve(true);
-      });
-
-      servidor.listen(porta);
-    });
-
-    if (disponivel) return porta;
-
-    console.log(`⚠️  Porta ${porta} está ocupada, tentando ${porta + 1}...`);
+// 🔥 FUNÇÃO PARA CARREGAR O .env CORRETO BASEADO NO AMBIENTE
+function loadEnvironment() {
+  // Detecta ambiente pelo comando ou NODE_ENV existente
+  const isProdCommand = process.env.npm_lifecycle_event === 'start:prod' ||
+                        process.argv.some(arg => arg.includes('dist/main')) ||
+                        process.argv[1]?.includes('dist/main');
+  
+  const isDevCommand = process.env.npm_lifecycle_event === 'start:dev' ||
+                       process.argv.some(arg => arg.includes('--watch')) ||
+                       process.argv[1]?.includes('src/main');
+  
+  // Define o ambiente baseado no comando, se não estiver definido
+  if (!process.env.NODE_ENV) {
+    if (isProdCommand) {
+      process.env.NODE_ENV = 'production';
+    } else if (isDevCommand) {
+      process.env.NODE_ENV = 'development';
+    } else {
+      process.env.NODE_ENV = 'development'; // fallback
+    }
   }
-
-  throw new Error(
-    `Não foi possível encontrar uma porta disponível após ${tentativasMaximas} tentativas`,
-  );
+  
+  // Tenta carregar o arquivo .env específico do ambiente
+  const envFile = process.env.NODE_ENV === 'production' ? '.env.prod' : '.env.dev';
+  const envPath = path.resolve(process.cwd(), envFile);
+  const defaultEnvPath = path.resolve(process.cwd(), '.env');
+  
+  // Carrega o arquivo específico se existir
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    console.log(`✅ Carregado configurações de ${envFile}`);
+  } 
+  // Fallback para .env padrão
+  else if (fs.existsSync(defaultEnvPath)) {
+    dotenv.config({ path: defaultEnvPath });
+    console.log(`⚠️  ${envFile} não encontrado, usando .env padrão`);
+  }
+  else {
+    console.log(`⚠️  Nenhum arquivo .env encontrado, usando variáveis do sistema`);
+  }
+  
+  // Valida variáveis essenciais
+  if (!process.env.JWT_SECRET) {
+    console.warn('⚠️  JWT_SECRET não definido! Use um valor seguro em produção.');
+  }
+  
+  console.log(`🔧 Ambiente: ${process.env.NODE_ENV?.toUpperCase() || 'DESENVOLVIMENTO'}`);
 }
 
-// ──────────────────────────────────────────────────────────────
-// Utilitário: Verificar se o banco já foi semeado
-// ──────────────────────────────────────────────────────────────
-async function isDatabaseSeeded(): Promise<boolean> {
-  const prisma = new PrismaClient();
-  try {
-    const count = await prisma.user.count();
-    return count > 0;
-  } catch {
-    return false;
-  } finally {
-    await prisma.$disconnect();
-  }
-}
+// Carrega as variáveis ANTES de qualquer coisa
+loadEnvironment();
 
-// ──────────────────────────────────────────────────────────────
-// Bootstrap
-// ──────────────────────────────────────────────────────────────
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
-    // OBRIGATÓRIO para verificação de assinatura HMAC do webhook MercadoPago.
-    // Sem isso, req.rawBody fica undefined e a validação sempre falha.
-    rawBody: true,
-  });
-
-  const logger = new Logger('Inicializacao');
-
+// Configuração da aplicação (reutilizável)
+async function configureApp(app: any) {
+  const environment = process.env.NODE_ENV;
+  const isProduction = environment === 'production';
+  
   // Validação global
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
-      forbidNonWhitelisted: true,
+      forbidNonWhitelisted: isProduction, // Mais restrito em produção
       transform: true,
+      disableErrorMessages: isProduction, // Esconde detalhes de erro em produção
       transformOptions: {
         enableImplicitConversion: true,
       },
     }),
   );
 
-  // CORS
-  app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*',
-    credentials: true,
-  });
+  // CORS - Diferente por ambiente
+  if (isProduction) {
+    // Produção: apenas domínios específicos
+    const corsOrigin = process.env.CORS_ORIGIN || 'https://laboure.vercel.app';
+    app.enableCors({
+      origin: corsOrigin.split(','),
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization'],
+    });
+    console.log(`🔒 CORS configurado para: ${corsOrigin}`);
+  } else {
+    // Desenvolvimento: libera tudo
+    app.enableCors({
+      origin: '*',
+      credentials: true,
+    });
+    console.log('🔓 CORS liberado para qualquer origem (desenvolvimento)');
+  }
 
   // Prefixo global da API
   app.setGlobalPrefix('api');
 
-  // ──────────────────────────────────────────────────────────────
-  // Swagger
-  // ──────────────────────────────────────────────────────────────
-  const config = new DocumentBuilder()
-    .setTitle('Documentação da API')
-    .setDescription(`
-      ## Documentação da API para Sistema de E-commerce
+  // Swagger APENAS em desenvolvimento (NÃO em produção)
+  if (!isProduction) {
+    const config = new DocumentBuilder()
+      .setTitle('Documentação da API - Labouré')
+      .setDescription(`
+        ## Documentação da API para Sistema de E-commerce
 
-      ### Funcionalidades:
-      - Gerenciamento de usuários (autenticação, perfil)
-      - Gerenciamento de produtos (operações CRUD)
-      - Operações de carrinho de compras
-      - Processamento de pedidos
-      - Integração de pagamento
-      - Sistema de notificações
-    `)
-    .setVersion('1.0')
-    .addBearerAuth(
-      {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        name: 'JWT',
-        description: 'Digite o token JWT',
-        in: 'header',
+        ### Funcionalidades:
+        - Gerenciamento de usuários (autenticação, perfil)
+        - Gerenciamento de produtos (operações CRUD)
+        - Operações de carrinho de compras
+        - Processamento de pedidos
+        - Integração de pagamento
+        - Sistema de notificações
+        
+        ### Ambientes:
+        - 🔧 **Atual:** DESENVOLVIMENTO
+        - 🚀 **Produção:** Disponível em produção sem Swagger
+      `)
+      .setVersion('1.0')
+      .addBearerAuth(
+        {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+          name: 'JWT',
+          description: 'Digite o token JWT',
+          in: 'header',
+        },
+        'access-token',
+      )
+      .addTag('Auth', 'Endpoints de autenticação - Login, Registro, Sair')
+      .addTag('Users', 'Gerenciamento de usuários - Perfil, Atualizar, Deletar')
+      .addTag('Produtos', 'Catálogo de produtos - Listar, Buscar, Detalhes')
+      .addTag('Carrinho', 'Carrinho de compras - Adicionar, Remover, Finalizar')
+      .addTag('Pedidos', 'Gerenciamento de pedidos - Criar, Rastrear, Cancelar')
+      .addTag('Pagamento', 'Processamento de pagamento - PIX, Boleto, Cartão')
+      .addTag('Notificacoes', 'Notificações do usuário - Ler, Deletar')
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+
+    SwaggerModule.setup('api/docs', app, document, {
+      swaggerOptions: {
+        persistAuthorization: true,
+        tagsSorter: 'alpha',
+        operationsSorter: 'alpha',
+        docExpansion: 'none',
+        filter: true,
+        showExtensions: true,
+        showCommonExtensions: true,
+        tryItOutEnabled: true,
       },
-      'access-token',
-    )
-    .addTag('Auth', 'Endpoints de autenticação - Login, Registro, Sair')
-    .addTag('Users', 'Gerenciamento de usuários - Perfil, Atualizar, Deletar')
-    .addTag('Produtos', 'Catálogo de produtos - Listar, Buscar, Detalhes')
-    .addTag('Carrinho', 'Carrinho de compras - Adicionar, Remover, Finalizar')
-    .addTag('Pedidos', 'Gerenciamento de pedidos - Criar, Rastrear, Cancelar')
-    .addTag('Pagamento', 'Processamento de pagamento - PIX, Boleto, Cartão')
-    .addTag('Notificacoes', 'Notificações do usuário - Ler, Deletar')
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-
-  SwaggerModule.setup('api/docs', app, document, {
-    swaggerOptions: {
-      persistAuthorization: true,
-      tagsSorter: 'alpha',
-      operationsSorter: 'alpha',
-      docExpansion: 'none',
-      filter: true,
-      showExtensions: true,
-      showCommonExtensions: true,
-      tryItOutEnabled: true,
-    },
-    customCss: `
-      .swagger-ui .topbar { background-color: #1e3a8a; }
-      .swagger-ui .topbar .download-url-wrapper .select-label select { border-color: #1e3a8a; }
-      .swagger-ui .info .title { color: #1e3a8a; }
-      .swagger-ui .btn.authorize { border-color: #1e3a8a; color: #1e3a8a; }
-      .swagger-ui .btn.authorize svg { fill: #1e3a8a; }
-    `,
-    customSiteTitle: 'Documentação da API de E-commerce',
-  });
-
-  // ──────────────────────────────────────────────────────────────
-  // Porta
-  // ──────────────────────────────────────────────────────────────
-  const portaDesejada = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-  const tentativasMaximas = parseInt(process.env.MAX_PORT_ATTEMPTS || '10');
-
-  let PORTA: number;
-
-  try {
-    PORTA = await encontrarPortaDisponivel(portaDesejada, tentativasMaximas);
-  } catch (erro) {
-    logger.error(`❌ ${erro.message}`);
-    process.exit(1);
+      customCss: `
+        .swagger-ui .topbar { background-color: #1e3a8a; }
+        .swagger-ui .topbar .download-url-wrapper .select-label select { border-color: #1e3a8a; }
+        .swagger-ui .info .title { color: #1e3a8a; }
+        .swagger-ui .btn.authorize { border-color: #1e3a8a; color: #1e3a8a; }
+        .swagger-ui .btn.authorize svg { fill: #1e3a8a; }
+      `,
+      customSiteTitle: 'Documentação da API - Labouré',
+    });
+    
+    console.log('📚 Swagger disponível em /api/docs');
+  } else {
+    console.log('🔒 Swagger desabilitado em produção');
   }
 
-  // ──────────────────────────────────────────────────────────────
-  // Seed — apenas em desenvolvimento e somente se ainda não foi feito
-  // ──────────────────────────────────────────────────────────────
-  if (process.env.NODE_ENV === 'development') {
-    try {
-      const jaFoiSemeado = await isDatabaseSeeded();
-
-      if (jaFoiSemeado) {
-        logger.log('🌱 Banco já foi semeado, pulando...');
-      } else {
-        await seedDatabase();
-        logger.log('🌱 Banco de dados semeado com sucesso!');
-      }
-    } catch (erro) {
-      logger.warn(`⚠️  Seed falhou (servidor continuará): ${erro.message}`);
-    }
-  }
-
-  // ──────────────────────────────────────────────────────────────
-  // Start
-  // ──────────────────────────────────────────────────────────────
-  await app.listen(PORTA);
-
-  logger.log(`🚀 Servidor rodando em http://localhost:${PORTA}`);
-  logger.log(`📚 Swagger disponível em http://localhost:${PORTA}/api/docs`);
-  logger.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'desenvolvimento'}`);
-  logger.log(`📁 Prefixo da API: /api`);
-  logger.log(`🔔 Webhook MercadoPago: http://localhost:${PORTA}/api/pagamento/webhook/mercadopago`);
-
-  if (PORTA !== portaDesejada) {
-    logger.warn(
-      `⚠️  Porta ${portaDesejada} estava ocupada, usando porta ${PORTA} como fallback`,
-    );
-  }
+  return app;
 }
 
-bootstrap();
+// Handler para Vercel (serverless)
+export default async function handler(req: any, res: any) {
+  if (!cachedServer) {
+    const expressApp = express();
+    const adapter = new ExpressAdapter(expressApp);
+    const app = await NestFactory.create(AppModule, adapter, {
+      rawBody: true, // Importante para webhook do MercadoPago
+    });
+    
+    await configureApp(app);
+    await app.init();
+    cachedServer = expressApp;
+    console.log('✅ Serverless handler inicializado');
+  }
+  
+  cachedServer(req, res);
+}
+
+// Bootstrap para desenvolvimento local
+async function bootstrapLocal() {
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true, // Importante para webhook do MercadoPago
+  });
+  
+  await configureApp(app);
+  
+  const portaDesejada = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  await app.listen(portaDesejada);
+  
+  const logger = new Logger('Inicializacao');
+  logger.log(`🚀 Servidor rodando em http://localhost:${portaDesejada}`);
+  
+  if (process.env.NODE_ENV !== 'production') {
+    logger.log(`📚 Swagger disponível em http://localhost:${portaDesejada}/api/docs`);
+  }
+  
+  logger.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'desenvolvimento'}`);
+  logger.log(`📦 Banco de dados: ${process.env.DATABASE_URL ? 'Configurado' : 'Não configurado'}`);
+}
+
+// Executa local apenas se não estiver no Vercel
+if (process.env.VERCEL !== '1') {
+  bootstrapLocal();
+}
