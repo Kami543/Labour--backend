@@ -3,8 +3,8 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Instalar dependências de build para Prisma
-RUN apk add --no-cache python3 make g++ openssl
+# Instalar dependências de build para Prisma (OpenSSL 1.1)
+RUN apk add --no-cache python3 make g++ openssl1.1-compat
 
 # Copiar arquivos de dependência
 COPY package*.json ./
@@ -27,8 +27,8 @@ FROM node:18-alpine AS runner
 
 WORKDIR /app
 
-# Instalar curl para healthcheck
-RUN apk add --no-cache curl
+# Instalar curl para healthcheck e OpenSSL 1.1 para runtime
+RUN apk add --no-cache curl openssl1.1-compat
 
 # Criar usuário não-root
 RUN addgroup -g 1001 -S nodejs && \
@@ -42,10 +42,13 @@ COPY --from=builder --chown=nestjs:nodejs /app/prisma ./prisma
 # Copiar o build do NestJS
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 
-# Expor porta
+# Expor porta (Render usa PORT, mas 3000 é fallback)
 EXPOSE 3000
 
 ENV NODE_ENV=production
+
+# Usar usuário não-root
+USER nestjs
 
 # Comando para iniciar
 CMD ["node", "dist/main"]
