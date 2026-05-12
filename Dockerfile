@@ -3,8 +3,9 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Instalar dependências de build para Prisma (OpenSSL 1.1)
-RUN apk add --no-cache python3 make g++ openssl1.1-compat
+# Instalar dependências de build para Prisma
+# Alpine 3.21+ usa OpenSSL 3.x, mas Prisma 4 funciona com libcrypto3
+RUN apk add --no-cache python3 make g++ openssl
 
 # Copiar arquivos de dependência
 COPY package*.json ./
@@ -16,7 +17,7 @@ RUN npm ci
 # Copiar código fonte
 COPY . .
 
-# Gerar Prisma Client
+# Gerar Prisma Client com target específico
 RUN npx prisma generate
 
 # Build da aplicação NestJS
@@ -27,8 +28,8 @@ FROM node:18-alpine AS runner
 
 WORKDIR /app
 
-# Instalar curl para healthcheck e OpenSSL 1.1 para runtime
-RUN apk add --no-cache curl openssl1.1-compat
+# Instalar curl para healthcheck e openssl
+RUN apk add --no-cache curl openssl
 
 # Criar usuário não-root
 RUN addgroup -g 1001 -S nodejs && \
@@ -42,8 +43,8 @@ COPY --from=builder --chown=nestjs:nodejs /app/prisma ./prisma
 # Copiar o build do NestJS
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 
-# Expor porta (Render usa PORT, mas 3000 é fallback)
-EXPOSE 3000
+# Expor porta
+EXPOSE 3001
 
 ENV NODE_ENV=production
 
