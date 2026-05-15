@@ -150,6 +150,6 @@ export class PedidosController {
     @Param('id') id: string,
     @Body('motivo') motivo?: string,
   ) {
-    return this.pedidosService.cancelAdmin(id, motivo);
-  }
+    return this.pedidosService.cancelAdmin(id, motivo || '')
+    }
 }

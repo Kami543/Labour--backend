@@ -203,7 +203,7 @@ export class PedidosService {
   }
 
   
-  async cancelAdmin(id: string, motivo: string) {
+  async cancelAdmin(id: string, motivo?: string) {
     // Buscar pedido com itens usando o repositório
     const pedido = await this.pedidoRepository.findById(id);
     
