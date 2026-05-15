@@ -1,4 +1,4 @@
-// pedidos.service.ts - VERSÃO COMPLETA COM TODOS OS MÉTODOS ADMIN CORRIGIDOS
+// pedidos.service.ts - VERSÃO COMPLETA COM MÉTODO cancelAdmin CORRIGIDO
 
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PedidoRepository } from './pedido.repository';
@@ -119,9 +119,6 @@ export class PedidosService {
 
   // ========== NOVOS MÉTODOS PARA ADMIN ==========
   
-  /**
-   * Admin: Buscar TODOS os pedidos de todos os usuários
-   */
   async findAllAdmin(page = 1, limit = 10, status?: string) {
     const skip = (page - 1) * limit;
     
@@ -135,17 +132,11 @@ export class PedidosService {
     return { data, total, page, limit };
   }
 
-  /**
-   * Admin: Buscar pedidos por status
-   */
   async findByStatus(status: string) {
     const pedidos = await this.pedidoRepository.findByStatus(status as StatusPedido);
     return pedidos;
   }
 
-  /**
-   * Admin: Buscar qualquer pedido por ID (sem verificar userId)
-   */
   async findOneAdmin(id: string) {
     const pedido = await this.pedidoRepository.findById(id);
     if (!pedido) {
@@ -154,9 +145,6 @@ export class PedidosService {
     return pedido;
   }
 
-  /**
-   * Admin: Atualizar status de qualquer pedido - VERSÃO CORRIGIDA
-   */
   async updateStatusAdmin(id: string, updateStatusDto: UpdatePedidoStatusDto) {
     const pedido = await this.pedidoRepository.findById(id);
     
@@ -171,20 +159,13 @@ export class PedidosService {
     let dataEnvio: Date | undefined;
     let codigoRastreio: string | undefined;
 
-    // Only set dataEnvio and codigoRastreio when status is 'enviado'
     if (updateStatusDto.status === StatusPedido.enviado) {
       dataEnvio = new Date();
       codigoRastreio = updateStatusDto.codigoRastreio;
       
-      // Validate codigoRastreio is provided when status is 'enviado'
       if (!codigoRastreio) {
         throw new BadRequestException('Código de rastreio é obrigatório quando status for "enviado"');
       }
-    }
-
-    // If status is 'entregue', set dataEntrega
-    if (updateStatusDto.status === StatusPedido.entregue) {
-      // You might want to add logic here for delivery date
     }
 
     const updatedPedido = await this.pedidoRepository.updateStatus(
@@ -194,7 +175,6 @@ export class PedidosService {
       codigoRastreio
     );
 
-    // Send notification to user
     await this.notificacoesService.create(pedido.userId, {
       tipo: 'entrega',
       titulo: 'Status do pedido atualizado',
@@ -204,9 +184,6 @@ export class PedidosService {
     return updatedPedido;
   }
 
-  /**
-   * Admin: Atualizar código de rastreio
-   */
   async updateRastreio(id: string, codigoRastreio: string) {
     const pedido = await this.pedidoRepository.findById(id);
     
@@ -225,38 +202,48 @@ export class PedidosService {
     return updatedPedido;
   }
 
-  /**
-   * Admin: Cancelar qualquer pedido
-   */
-  async cancelAdmin(id: string, motivo?: string) {
+  
+  async cancelAdmin(id: string, motivo: string) {
+    // Buscar pedido com itens usando o repositório
     const pedido = await this.pedidoRepository.findById(id);
-
+    
     if (!pedido) {
       throw new NotFoundException('Pedido não encontrado');
     }
 
-    if (pedido.status !== StatusPedido.pendente) {
-      throw new BadRequestException('Só é possível cancelar pedidos pendentes');
+    // 🔧 CORREÇÃO BUG #3: Permitir cancelar pendente OU pagamento_confirmado
+    if (pedido.status !== StatusPedido.pendente && pedido.status !== StatusPedido.pagamento_confirmado) {
+      throw new BadRequestException('Só é possível cancelar pedidos pendentes ou com pagamento confirmado');
     }
 
-    for (const item of pedido.itens) {
-      await this.produtoRepository.incrementEstoque(item.produtoId, item.quantidade);
+    // Se o pedido já foi pago, estornar o estoque
+    if (pedido.status === StatusPedido.pagamento_confirmado && pedido.itens) {
+      for (const item of pedido.itens) {
+        await this.produtoRepository.incrementEstoque(item.produtoId, item.quantidade);
+      }
     }
 
+    // Atualizar observações com o motivo do cancelamento
+    const observacoesAtualizadas = pedido.observacoes 
+      ? `${pedido.observacoes}\n[ADMIN] Cancelado: ${motivo}`
+      : `[ADMIN] Cancelado: ${motivo}`;
+
+    // Atualizar status para cancelado usando o repositório
     const canceledPedido = await this.pedidoRepository.updateStatus(id, StatusPedido.cancelado);
 
+    // Atualizar observações separadamente (se necessário)
+    await this.pedidoRepository.update(id, { observacoes: observacoesAtualizadas });
+
+    // Notificar o usuário
     await this.notificacoesService.create(pedido.userId, {
       tipo: 'sistema',
-      titulo: 'Pedido cancelado',
-      mensagem: `Seu pedido ${pedido.numero} foi cancelado. Motivo: ${motivo || 'Não informado'}`,
+      titulo: 'Pedido cancelado pelo administrador',
+      mensagem: `Seu pedido ${pedido.numero} foi cancelado. Motivo: ${motivo}`,
     });
 
     return canceledPedido;
   }
 
-  /**
-   * Admin: Buscar pedidos por cliente
-   */
   async findPedidosByCliente(clienteId: string, page = 1, limit = 10) {
     const [data, total] = await Promise.all([
       this.pedidoRepository.findByUser(clienteId, page, limit),
@@ -266,30 +253,18 @@ export class PedidosService {
     return { data, total, page, limit };
   }
 
-  /**
-   * Admin: Obter estatísticas de pedidos
-   */
   async getOrderStats() {
     return this.pedidoRepository.getOrderStats();
   }
 
-  /**
-   * Admin: Buscar pedidos recentes
-   */
   async getRecentOrders(limit: number = 10) {
     return this.pedidoRepository.findRecentOrders(limit);
   }
 
-  /**
-   * Admin: Buscar pedidos por período
-   */
   async getOrdersByPeriod(startDate: Date, endDate: Date, page = 1, limit = 10) {
     return this.pedidoRepository.findByPeriod(startDate, endDate, page, limit);
   }
 
-  /**
-   * Admin: Buscar pedidos por termo de busca
-   */
   async searchOrders(searchTerm: string, page = 1, limit = 10) {
     return this.pedidoRepository.findByCliente(searchTerm, page, limit);
   }
