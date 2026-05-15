@@ -1,13 +1,22 @@
-// pedidos.service.ts - VERSÃO CORRIGIDA
+// pedidos.service.ts - VERSÃO COMPLETAMENTE CORRIGIDA
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PedidoRepository } from './pedido.repository';
 import { CartRepository } from '../cart/cart.repository';
 import { ProdutoRepository } from '../produto/produto.repository';
 import { UserRepository } from '../users/users.repository';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
-import { CreatePedidoDto } from './dto/create-pedido.dto';
+import { CreatePedidoDto, CreatePedidoItemDto } from './dto/create-pedido.dto';
 import { UpdatePedidoStatusDto } from './dto/update-pedido-status.dto';
 import { StatusPedido } from '@prisma/client';
+
+// Interface para os itens do pedido
+interface PedidoItemInput {
+  produtoId: string;
+  quantidade: number;
+  precoUnitario: number;
+  tamanho: string | null;
+  cor: string | null;
+}
 
 @Injectable()
 export class PedidosService {
@@ -27,7 +36,7 @@ export class PedidosService {
     
     let cartItems: any[] = [];
     let subtotal = 0;
-    const pedidoItens = [];
+    const pedidoItens: PedidoItemInput[] = []; // ← TIPO EXPLÍCITO
 
     // VERIFICA SE TEM ITENS DIRETOS NO DTO
     if (itens && itens.length > 0) {
@@ -94,9 +103,14 @@ export class PedidosService {
     const total = subtotal + Number(frete) + Number(imposto);
     
     // Busca endereço (prioriza o enviado, depois o do usuário)
-    let enderecoFinal = enderecoEntrega;
-    if (!enderecoFinal || Object.keys(enderecoFinal).length === 0) {
-      enderecoFinal = user?.endereco || {
+    let enderecoFinal: Record<string, any> = {};
+    
+    if (enderecoEntrega && typeof enderecoEntrega === 'object' && Object.keys(enderecoEntrega).length > 0) {
+      enderecoFinal = enderecoEntrega as Record<string, any>;
+    } else if (user?.endereco && typeof user.endereco === 'object') {
+      enderecoFinal = user.endereco as Record<string, any>;
+    } else {
+      enderecoFinal = {
         rua: 'Endereço não informado',
         numero: 'S/N',
         bairro: 'Não informado',
@@ -114,7 +128,7 @@ export class PedidosService {
       imposto: Number(imposto),
       total,
       enderecoEntrega: enderecoFinal,
-      observacoes: observacoes || null,
+      observacoes: observacoes || undefined, // ← null não é permitido, usar undefined
       status: StatusPedido.pendente,
     });
     
@@ -125,8 +139,8 @@ export class PedidosService {
         produtoId: item.produtoId,
         quantidade: item.quantidade,
         precoUnitario: item.precoUnitario,
-        tamanho: item.tamanho,
-        cor: item.cor,
+        tamanho: item.tamanho || undefined,
+        cor: item.cor || undefined,
       });
     }
     
