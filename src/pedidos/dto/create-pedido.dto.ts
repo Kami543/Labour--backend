@@ -1,9 +1,41 @@
 // src/modules/pedidos/dto/create-pedido.dto.ts
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsNumber, IsString, IsObject, Min } from 'class-validator';
+import { IsOptional, IsNumber, IsString, IsObject, Min, IsArray, ValidateNested, IsUUID, IsInt } from 'class-validator';
 import { Type } from 'class-transformer';
 
+export class CreatePedidoItemDto {
+  @ApiProperty({ description: 'ID do produto' })
+  @IsUUID()
+  produtoId: string;
+
+  @ApiProperty({ description: 'Quantidade', minimum: 1 })
+  @IsInt()
+  @Min(1)
+  quantidade: number;
+
+  @ApiProperty({ description: 'Tamanho', required: false })
+  @IsOptional()
+  @IsString()
+  tamanho?: string;
+
+  @ApiProperty({ description: 'Cor', required: false })
+  @IsOptional()
+  @IsString()
+  cor?: string;
+}
+
 export class CreatePedidoDto {
+  @ApiProperty({ 
+    description: 'Itens do pedido (opcional - se não enviar, usa o carrinho)',
+    type: [CreatePedidoItemDto],
+    required: false
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreatePedidoItemDto)
+  itens?: CreatePedidoItemDto[];
+
   @ApiProperty({ 
     description: 'Valor do frete',
     example: 10.00,
@@ -30,7 +62,6 @@ export class CreatePedidoDto {
 
   @ApiProperty({ 
     description: 'Observações do pedido',
-    example: 'Entregar após as 18h',
     required: false
   })
   @IsOptional()
@@ -38,7 +69,7 @@ export class CreatePedidoDto {
   observacoes?: string;
 
   @ApiProperty({ 
-    description: 'Endereço de entrega (JSON)',
+    description: 'Endereço de entrega',
     example: {
       rua: 'Rua das Flores',
       numero: '123',
@@ -47,10 +78,8 @@ export class CreatePedidoDto {
       cidade: 'São Paulo',
       estado: 'SP',
       cep: '01000-000'
-    },
-    required: false
+    }
   })
-  @IsOptional()
   @IsObject()
-  enderecoEntrega?: any;
+  enderecoEntrega: Record<string, any>;
 }

@@ -1,5 +1,4 @@
-// pedidos.service.ts - VERSÃO COMPLETA COM MÉTODO cancelAdmin CORRIGIDO
-
+// pedidos.service.ts - VERSÃO CORRIGIDA
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PedidoRepository } from './pedido.repository';
 import { CartRepository } from '../cart/cart.repository';
@@ -20,63 +19,134 @@ export class PedidosService {
     private userRepository: UserRepository,
   ) {}
 
-  // ========== MÉTODOS EXISTENTES (USUÁRIO COMUM) ==========
+  // ========== MÉTODO CREATE CORRIGIDO ==========
   
   async create(userId: string, createPedidoDto: CreatePedidoDto) {
     const user = await this.userRepository.findById(userId);
-    const cartItems = await this.cartRepository.findCartByUser(userId);
+    const { itens, enderecoEntrega, frete = 0, imposto = 0, observacoes } = createPedidoDto;
+    
+    let cartItems: any[] = [];
+    let subtotal = 0;
+    const pedidoItens = [];
 
-    if (!cartItems || cartItems.length === 0) {
-      throw new BadRequestException('Carrinho vazio');
-    }
-
-    const subtotal = cartItems.reduce((sum, item) => {
-      return sum + (Number(item.produto.preco) * item.quantidade);
-    }, 0);
-
-    const { frete = 0, imposto = 0, observacoes, enderecoEntrega } = createPedidoDto;
-    const total = subtotal + frete + imposto;
-
-    for (const item of cartItems) {
-      if (item.produto.estoque < item.quantidade) {
-        throw new BadRequestException(`Estoque insuficiente para ${item.produto.nome}`);
+    // VERIFICA SE TEM ITENS DIRETOS NO DTO
+    if (itens && itens.length > 0) {
+      console.log(`📦 Criando pedido com ${itens.length} itens diretos`);
+      
+      // Processa os itens enviados diretamente
+      for (const item of itens) {
+        const produto = await this.produtoRepository.findById(item.produtoId);
+        
+        if (!produto) {
+          throw new BadRequestException(`Produto ${item.produtoId} não encontrado`);
+        }
+        
+        if (produto.estoque < item.quantidade) {
+          throw new BadRequestException(`Estoque insuficiente para ${produto.nome}`);
+        }
+        
+        const precoUnitario = Number(produto.preco);
+        subtotal += precoUnitario * item.quantidade;
+        
+        pedidoItens.push({
+          produtoId: item.produtoId,
+          quantidade: item.quantidade,
+          precoUnitario: precoUnitario,
+          tamanho: item.tamanho || null,
+          cor: item.cor || null,
+        });
+        
+        // Atualiza estoque
+        await this.produtoRepository.decrementEstoque(item.produtoId, item.quantidade);
+      }
+      
+    } else {
+      // SE NÃO TEM ITENS DIRETOS, USA O CARRINHO
+      console.log('🛒 Criando pedido a partir do carrinho');
+      cartItems = await this.cartRepository.findCartByUser(userId);
+      
+      if (!cartItems || cartItems.length === 0) {
+        throw new BadRequestException('Carrinho vazio. Adicione itens ao carrinho antes de finalizar o pedido.');
+      }
+      
+      // Processa itens do carrinho
+      for (const item of cartItems) {
+        if (item.produto.estoque < item.quantidade) {
+          throw new BadRequestException(`Estoque insuficiente para ${item.produto.nome}`);
+        }
+        
+        const precoUnitario = Number(item.produto.preco);
+        subtotal += precoUnitario * item.quantidade;
+        
+        pedidoItens.push({
+          produtoId: item.produtoId,
+          quantidade: item.quantidade,
+          precoUnitario: precoUnitario,
+          tamanho: item.tamanho || null,
+          cor: item.cor || null,
+        });
+        
+        await this.produtoRepository.decrementEstoque(item.produtoId, item.quantidade);
       }
     }
-
+    
+    // Calcula total
+    const total = subtotal + Number(frete) + Number(imposto);
+    
+    // Busca endereço (prioriza o enviado, depois o do usuário)
+    let enderecoFinal = enderecoEntrega;
+    if (!enderecoFinal || Object.keys(enderecoFinal).length === 0) {
+      enderecoFinal = user?.endereco || {
+        rua: 'Endereço não informado',
+        numero: 'S/N',
+        bairro: 'Não informado',
+        cidade: 'Não informada',
+        estado: 'Não informado',
+        cep: '00000-000'
+      };
+    }
+    
+    // Cria o pedido
     const pedido = await this.pedidoRepository.createPedido({
       userId,
       subtotal,
-      frete,
-      imposto,
+      frete: Number(frete),
+      imposto: Number(imposto),
       total,
-      enderecoEntrega: enderecoEntrega || user?.endereco || 'Endereço não informado',
-      observacoes,
+      enderecoEntrega: enderecoFinal,
+      observacoes: observacoes || null,
       status: StatusPedido.pendente,
     });
-
-    for (const item of cartItems) {
+    
+    // Adiciona os itens ao pedido
+    for (const item of pedidoItens) {
       await this.pedidoRepository.createPedidoItem({
         pedidoId: pedido.id,
         produtoId: item.produtoId,
         quantidade: item.quantidade,
-        precoUnitario: item.produto.preco,
-        tamanho: item.tamanho ?? undefined,
-        cor: item.cor ?? undefined,
+        precoUnitario: item.precoUnitario,
+        tamanho: item.tamanho,
+        cor: item.cor,
       });
-
-      await this.produtoRepository.decrementEstoque(item.produtoId, item.quantidade);
     }
-
-    await this.cartRepository.clearCart(userId);
-
+    
+    // Se usou carrinho, limpa ele
+    if (cartItems.length > 0) {
+      await this.cartRepository.clearCart(userId);
+    }
+    
+    // Notifica o usuário
     await this.notificacoesService.create(userId, {
       tipo: 'sistema',
       titulo: 'Pedido criado',
-      mensagem: `Seu pedido ${pedido.numero} foi criado com sucesso`,
+      mensagem: `Seu pedido ${pedido.numero} foi criado com sucesso no valor de ${this.formatCurrency(total)}`,
     });
-
+    
+    // Retorna o pedido completo
     return await this.pedidoRepository.findByIdAndUser(pedido.id, userId);
   }
+  
+  // ========== MÉTODOS EXISTENTES (SEM ALTERAÇÕES) ==========
   
   async findByUser(userId: string, page = 1, limit = 10) {
     const [data, total] = await Promise.all([
@@ -117,7 +187,7 @@ export class PedidosService {
     return canceledPedido;
   }
 
-  // ========== NOVOS MÉTODOS PARA ADMIN ==========
+  // ========== MÉTODOS ADMIN ==========
   
   async findAllAdmin(page = 1, limit = 10, status?: string) {
     const skip = (page - 1) * limit;
@@ -202,43 +272,35 @@ export class PedidosService {
     return updatedPedido;
   }
 
-  
   async cancelAdmin(id: string, motivo?: string) {
-    // Buscar pedido com itens usando o repositório
     const pedido = await this.pedidoRepository.findById(id);
     
     if (!pedido) {
       throw new NotFoundException('Pedido não encontrado');
     }
 
-    // 🔧 CORREÇÃO BUG #3: Permitir cancelar pendente OU pagamento_confirmado
     if (pedido.status !== StatusPedido.pendente && pedido.status !== StatusPedido.pagamento_confirmado) {
       throw new BadRequestException('Só é possível cancelar pedidos pendentes ou com pagamento confirmado');
     }
 
-    // Se o pedido já foi pago, estornar o estoque
     if (pedido.status === StatusPedido.pagamento_confirmado && pedido.itens) {
       for (const item of pedido.itens) {
         await this.produtoRepository.incrementEstoque(item.produtoId, item.quantidade);
       }
     }
 
-    // Atualizar observações com o motivo do cancelamento
     const observacoesAtualizadas = pedido.observacoes 
-      ? `${pedido.observacoes}\n[ADMIN] Cancelado: ${motivo}`
-      : `[ADMIN] Cancelado: ${motivo}`;
+      ? `${pedido.observacoes}\n[ADMIN] Cancelado: ${motivo || 'Sem motivo informado'}`
+      : `[ADMIN] Cancelado: ${motivo || 'Sem motivo informado'}`;
 
-    // Atualizar status para cancelado usando o repositório
     const canceledPedido = await this.pedidoRepository.updateStatus(id, StatusPedido.cancelado);
 
-    // Atualizar observações separadamente (se necessário)
     await this.pedidoRepository.update(id, { observacoes: observacoesAtualizadas });
 
-    // Notificar o usuário
     await this.notificacoesService.create(pedido.userId, {
       tipo: 'sistema',
       titulo: 'Pedido cancelado pelo administrador',
-      mensagem: `Seu pedido ${pedido.numero} foi cancelado. Motivo: ${motivo}`,
+      mensagem: `Seu pedido ${pedido.numero} foi cancelado. Motivo: ${motivo || 'Não informado'}`,
     });
 
     return canceledPedido;
@@ -267,5 +329,13 @@ export class PedidosService {
 
   async searchOrders(searchTerm: string, page = 1, limit = 10) {
     return this.pedidoRepository.findByCliente(searchTerm, page, limit);
+  }
+
+  // Helper privado
+  private formatCurrency(value: number): string {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(value);
   }
 }
