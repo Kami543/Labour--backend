@@ -1,8 +1,10 @@
+// pedidos.controller.ts - VERSÃO CORRIGIDA COM SUPORTE A ADMIN
 import {
   Controller,
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -12,203 +14,121 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiBearerAuth,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
-  ApiParam,
-  ApiQuery,
-  ApiExtraModels, // Adicione este
-} from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PedidosService } from './pedidos.service';
 import { CreatePedidoDto } from './dto/create-pedido.dto';
 import { UpdatePedidoStatusDto } from './dto/update-pedido-status.dto';
 import { AuthGuard } from '@nestjs/passport';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '@prisma/client';
 
-@ApiTags('📋 Pedidos') // Adicione emoji para melhor visualização
+@ApiTags('Pedidos')
 @ApiBearerAuth('access-token')
 @Controller('pedidos')
-@UseGuards(AuthGuard('jwt'))
-@ApiExtraModels(CreatePedidoDto, UpdatePedidoStatusDto) // Adicione modelos extras
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 export class PedidosController {
   constructor(private readonly pedidosService: PedidosService) {}
 
+  // ========== ROTAS PARA ADMIN ==========
+  
+  @Get()
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin: Listar todos os pedidos' })
+  async findAllAdmin(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: string,
+  ) {
+    const pageNum = page ? parseInt(page) : 1;
+    const limitNum = limit ? parseInt(limit) : 10;
+    return this.pedidosService.findAllAdmin(pageNum, limitNum, status);
+  }
+
+  @Get('status/:status')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin: Buscar pedidos por status' })
+  async findByStatus(@Param('status') status: string) {
+    return this.pedidosService.findByStatus(status);
+  }
+
+  @Get('cliente/:clienteId')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin: Buscar pedidos por cliente' })
+  async findByCliente(@Param('clienteId') clienteId: string) {
+    return this.pedidosService.findByUser(clienteId);
+  }
+
+  @Get(':id')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin: Buscar qualquer pedido por ID' })
+  async findOneAdmin(@Param('id') id: string) {
+    return this.pedidosService.findOneAdmin(id);
+  }
+
+  @Patch(':id/status')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin: Atualizar status de qualquer pedido' })
+  async updateStatusAdmin(
+    @Param('id') id: string,
+    @Body() updateStatusDto: UpdatePedidoStatusDto,
+  ) {
+    return this.pedidosService.updateStatusAdmin(id, updateStatusDto);
+  }
+
+  @Patch(':id/rastreio')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin: Atualizar código de rastreio' })
+  async updateRastreio(
+    @Param('id') id: string,
+    @Body('codigoRastreio') codigoRastreio: string,
+  ) {
+    return this.pedidosService.updateRastreio(id, codigoRastreio);
+  }
+
+  @Post(':id/cancelar')
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin: Cancelar qualquer pedido' })
+  async cancelAdmin(
+    @Param('id') id: string,
+    @Body('motivo') motivo?: string,
+  ) {
+    return this.pedidosService.cancelAdmin(id, motivo);
+  }
+
+  // ========== ROTAS PARA USUÁRIO COMUM ==========
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ 
-    summary: 'Criar um novo pedido',
-    description: 'Cria um pedido baseado nos itens do carrinho do usuário'
-  })
-  @ApiBody({ 
-    type: CreatePedidoDto,
-    description: 'Dados para criação do pedido'
-  })
-  @ApiResponse({
-    status: 201,
-    description: 'Pedido criado com sucesso',
-    schema: {
-      example: {
-        id: 'pedido_id',
-        numero: 'PED-123456',
-        status: 'pendente',
-        subtotal: 119.80,
-        frete: 10.00,
-        imposto: 5.00,
-        total: 134.80,
-        userId: 'user_id',
-        itens: [],
-        createdAt: '2024-01-01T00:00:00.000Z'
-      }
-    }
-  })
-  @ApiResponse({ status: 400, description: 'Carrinho vazio ou dados inválidos' })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
+  @ApiOperation({ summary: 'Criar um novo pedido' })
   async create(@Req() req: any, @Body() createPedidoDto: CreatePedidoDto) {
     const userId = req.user.userId;
     return this.pedidosService.create(userId, createPedidoDto);
   }
 
-  @Get()
-  @ApiOperation({ 
-    summary: 'Listar todos os pedidos',
-    description: 'Retorna uma lista paginada de todos os pedidos do usuário'
-  })
-  @ApiQuery({ 
-    name: 'page', 
-    required: false, 
-    example: 1,
-    description: 'Número da página'
-  })
-  @ApiQuery({ 
-    name: 'limit', 
-    required: false, 
-    example: 10,
-    description: 'Itens por página'
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Lista de pedidos retornada com sucesso',
-    schema: {
-      example: {
-        data: [],
-        total: 5,
-        page: 1,
-        limit: 10
-      }
-    }
-  })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  async findAll(
+  @Get('meus')
+  @ApiOperation({ summary: 'Listar meus pedidos' })
+  async findMyOrders(
     @Req() req: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     const userId = req.user.userId;
-    return this.pedidosService.findAll(userId, page, limit);
+    const pageNum = page ? parseInt(page) : 1;
+    const limitNum = limit ? parseInt(limit) : 10;
+    return this.pedidosService.findByUser(userId, pageNum, limitNum);
   }
 
-  @Get(':id')
-  @ApiOperation({ 
-    summary: 'Buscar pedido por ID',
-    description: 'Retorna os detalhes completos de um pedido específico'
-  })
-  @ApiParam({ 
-    name: 'id', 
-    description: 'ID do pedido',
-    example: 'cm8k3x...',
-    required: true 
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Pedido encontrado com sucesso',
-    schema: {
-      example: {
-        id: 'pedido_id',
-        numero: 'PED-123456',
-        status: 'pendente',
-        itens: [
-          {
-            id: 'item_id',
-            produtoId: 'produto_id',
-            quantidade: 2,
-            precoUnitario: 59.90,
-            subtotal: 119.80
-          }
-        ]
-      }
-    }
-  })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  @ApiResponse({ status: 404, description: 'Pedido não encontrado' })
+  @Get('meu/:id')
+  @ApiOperation({ summary: 'Buscar meu pedido por ID' })
   async findOne(@Req() req: any, @Param('id') id: string) {
     const userId = req.user.userId;
     return this.pedidosService.findOne(id, userId);
   }
 
-  @Put(':id/status')
-  @ApiOperation({ 
-    summary: 'Atualizar status do pedido',
-    description: 'Atualiza o status do pedido (pendente, pago, enviado, entregue, cancelado)'
-  })
-  @ApiParam({ 
-    name: 'id', 
-    description: 'ID do pedido',
-    example: 'cm8k3x...'
-  })
-  @ApiBody({ 
-    type: UpdatePedidoStatusDto,
-    description: 'Novo status do pedido'
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Status atualizado com sucesso',
-    schema: {
-      example: {
-        id: 'pedido_id',
-        status: 'pago',
-        updatedAt: '2024-01-01T00:00:00.000Z'
-      }
-    }
-  })
-  @ApiResponse({ status: 400, description: 'Status inválido' })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  @ApiResponse({ status: 404, description: 'Pedido não encontrado' })
-  async updateStatus(
-    @Req() req: any,
-    @Param('id') id: string,
-    @Body() updateStatusDto: UpdatePedidoStatusDto,
-  ) {
-    const userId = req.user.userId;
-    return this.pedidosService.updateStatus(id, userId, updateStatusDto);
-  }
-
-  @Delete(':id/cancel')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ 
-    summary: 'Cancelar pedido',
-    description: 'Cancela um pedido pendente e retorna os produtos ao estoque'
-  })
-  @ApiParam({ 
-    name: 'id', 
-    description: 'ID do pedido',
-    example: 'cm8k3x...'
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Pedido cancelado com sucesso',
-    schema: {
-      example: {
-        id: 'pedido_id',
-        status: 'cancelado'
-      }
-    }
-  })
-  @ApiResponse({ status: 400, description: 'Pedido não pode ser cancelado' })
-  @ApiResponse({ status: 401, description: 'Não autorizado' })
-  @ApiResponse({ status: 404, description: 'Pedido não encontrado' })
-  async cancel(@Req() req: any, @Param('id') id: string) {
+  @Patch('meu/:id/cancelar')
+  @ApiOperation({ summary: 'Cancelar meu pedido' })
+  async cancelMyOrder(@Req() req: any, @Param('id') id: string) {
     const userId = req.user.userId;
     return this.pedidosService.cancel(id, userId);
   }

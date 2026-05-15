@@ -1,111 +1,120 @@
 // src/modules/notificacoes/notificacao.repository.ts
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Notificacao } from '@prisma/client';
-import { TipoNotificacao } from '@prisma/client';
-import { BaseRepository } from '../common/utils/baseRepository';
+import { Notificacao, TipoNotificacao } from '@prisma/client';
 
 @Injectable()
-export class NotificacaoRepository extends BaseRepository<Notificacao> {
-  constructor(protected readonly prisma: PrismaService) {
-    super(prisma);
-  }
+export class NotificacaoRepository {
+  constructor(private readonly prisma: PrismaService) {}
 
-  protected get model() {
+  private get model() {
     return this.prisma.notificacao;
   }
 
-  async findByUser(userId: string, page?: number, limit?: number, apenasNaoLidas?: boolean) {
-    const skip = page && limit ? (page - 1) * limit : undefined;
-    const take = limit;
-    const where = { userId, ...(apenasNaoLidas && { lida: false }) };
-
-    return this.model.findMany({
-      where,
-      skip,
-      take,
-      orderBy: { createdAt: 'desc' }
-    });
-  }
-
-  async findByIdAndUser(id: string, userId: string) {
-    return this.model.findFirst({
-      where: { id, userId }
-    });
-  }
-
-  async createNotificacao(data: {
+  async create(data: {
     userId: string;
     tipo: TipoNotificacao;
     titulo: string;
     mensagem: string;
-  }) {
+    lida?: boolean;
+  }): Promise<Notificacao> {
     return this.model.create({ data });
   }
 
-  async markAsRead(id: string) {
-    return this.model.update({
-      where: { id },
-      data: { lida: true }
+  async findByUser(
+    userId: string,
+    apenasNaoLidas?: boolean,
+    skip = 0,
+    take = 20,
+  ): Promise<Notificacao[]> {
+    const where: { userId: string; lida?: boolean } = { userId };
+    if (apenasNaoLidas) where.lida = false;
+
+    return this.model.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
     });
   }
 
-  async markAllAsRead(userId: string) {
-    return this.model.updateMany({
-      where: { userId, lida: false },
-      data: { lida: true }
-    });
+  async countByUser(userId: string, apenasNaoLidas?: boolean): Promise<number> {
+    const where: { userId: string; lida?: boolean } = { userId };
+    if (apenasNaoLidas) where.lida = false;
+    return this.model.count({ where });
+  }
+
+  async findByIdAndUser(id: string, userId: string): Promise<Notificacao | null> {
+    return this.model.findFirst({ where: { id, userId } });
   }
 
   async countNaoLidas(userId: string): Promise<number> {
-    return this.model.count({
-      where: { userId, lida: false }
+    return this.model.count({ where: { userId, lida: false } });
+  }
+
+  async markAsRead(id: string): Promise<Notificacao> {
+    return this.model.update({
+      where: { id },
+      data: { lida: true },
     });
   }
 
-  async countByUser(userId: string): Promise<number> {
-    return this.model.count({ where: { userId } });
-  }
-
-  async deleteAllRead(userId: string) {
-    return this.model.deleteMany({
-      where: { userId, lida: true }
+  async markAllAsRead(userId: string): Promise<{ count: number }> {
+    return this.model.updateMany({
+      where: { userId, lida: false },
+      data: { lida: true },
     });
   }
 
-  async deleteById(id: string): Promise<void> {
-    await this.model.delete({
-      where: { id }
-    });
+  async delete(id: string): Promise<Notificacao> {
+    return this.model.delete({ where: { id } });
   }
-  
-  async bulkCreate(notificacoes: Array<{
-    userId: string;
-    tipo: TipoNotificacao;
-    titulo: string;
-    mensagem: string;
-  }>) {
+
+  async deleteAllRead(userId: string): Promise<{ count: number }> {
+    return this.model.deleteMany({ where: { userId, lida: true } });
+  }
+
+  async bulkCreate(
+    notificacoes: Array<{
+      userId: string;
+      tipo: TipoNotificacao;
+      titulo: string;
+      mensagem: string;
+    }>,
+  ): Promise<Notificacao[]> {
     return this.prisma.$transaction(
-      notificacoes.map(notificacao => this.model.create({ data: notificacao }))
+      notificacoes.map((n) => this.model.create({ data: n })),
     );
   }
 
-  async getStats(userId: string) {
-    const totalPorTipo = await this.model.groupBy({
-      by: ['tipo'],
-      where: { userId },
-      _count: { tipo: true }
-    });
+  async getStats(userId: string): Promise<{
+    total: number;
+    naoLidas: number;
+    ultimasSemana: number;
+    totalPorTipo: Record<string, number>;
+  }> {
+    const umaSemanaAtras = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-    const ultimasSemana = await this.model.count({
-      where: {
-        userId,
-        createdAt: {
-          gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-        }
-      }
-    });
+    const [total, naoLidas, ultimasSemana, notificacoes] = await Promise.all([
+      this.model.count({ where: { userId } }),
+      this.model.count({ where: { userId, lida: false } }),
+      this.model.count({
+        where: { userId, createdAt: { gte: umaSemanaAtras } },
+      }),
+      this.model.findMany({
+        where: { userId },
+        select: { tipo: true },
+      }),
+    ]);
 
-    return { totalPorTipo, ultimasSemana };
+    const totalPorTipo = notificacoes.reduce<Record<string, number>>(
+      (acc, { tipo }) => {
+        acc[tipo] = (acc[tipo] ?? 0) + 1;
+        return acc;
+      },
+      {},
+    );
+
+    return { total, naoLidas, ultimasSemana, totalPorTipo };
   }
 }

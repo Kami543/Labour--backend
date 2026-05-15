@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
+import { PedidosController } from './pedidos.controller'; // ← Adicione esta linha
 import { PedidosService } from './pedidos.service';
 import { PedidoRepository } from './pedido.repository';
 import { CartRepository } from '../cart/cart.repository';
 import { ProdutoRepository } from '../produto/produto.repository';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
-import { NotificacaoRepository } from '../notificacoes/notificacao.repository'; // Adicione esta importação
+import { NotificacaoRepository } from '../notificacoes/notificacao.repository';
 import { UserModule } from '../users/users.module';
 import { PrismaModule } from '../prisma/prisma.module';
 
@@ -13,13 +14,14 @@ import { PrismaModule } from '../prisma/prisma.module';
     PrismaModule,
     UserModule,
   ],
+  controllers: [PedidosController], // ← Adicione esta linha (importante!)
   providers: [
     PedidosService,
     PedidoRepository,
     CartRepository,
     ProdutoRepository,
     NotificacoesService,
-    NotificacaoRepository, 
+    NotificacaoRepository,
   ],
   exports: [PedidosService],
 })

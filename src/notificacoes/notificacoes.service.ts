@@ -1,27 +1,35 @@
 // src/modules/notificacoes/notificacoes.service.ts
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { TipoNotificacao } from '@prisma/client';
 import { NotificacaoRepository } from './notificacao.repository';
 import { CreateNotificacaoDto } from './dto/create-notificacao.dto';
-import { TipoNotificacao } from '@prisma/client';
 
 @Injectable()
 export class NotificacoesService {
-  constructor(
-    private notificacaoRepository: NotificacaoRepository,
-  ) {}
+  constructor(private readonly notificacaoRepository: NotificacaoRepository) {}
 
-  async create(userId: string, createDto: CreateNotificacaoDto) {
-    return this.notificacaoRepository.createNotificacao({
+  async create(userId: string, dto: CreateNotificacaoDto) {
+    return this.notificacaoRepository.create({
       userId,
-      tipo: createDto.tipo as TipoNotificacao,
-      titulo: createDto.titulo,
-      mensagem: createDto.mensagem,
+      tipo: dto.tipo as TipoNotificacao,
+      titulo: dto.titulo,
+      mensagem: dto.mensagem,
+      lida: false,
     });
   }
 
-  async findAll(userId: string, page?: number, limit?: number, apenasNaoLidas?: boolean) {
+  async findAll(
+    userId: string,
+    page?: number,
+    limit?: number,
+    apenasNaoLidas?: boolean,
+  ) {
+    const pageNum = Number(page) || 1;
+    const limitNum = Number(limit) || 20;
+    const skip = (pageNum - 1) * limitNum;
+
     const [data, total, naoLidas] = await Promise.all([
-      this.notificacaoRepository.findByUser(userId, page, limit, apenasNaoLidas),
+      this.notificacaoRepository.findByUser(userId, apenasNaoLidas, skip, limitNum),
       this.notificacaoRepository.countByUser(userId),
       this.notificacaoRepository.countNaoLidas(userId),
     ]);
@@ -29,44 +37,33 @@ export class NotificacoesService {
     return {
       data,
       total,
-      page: page || 1,
-      limit: limit || 20,
+      page: pageNum,
+      limit: limitNum,
       naoLidas,
-      mensagem: `Você tem ${naoLidas} ${naoLidas === 1 ? 'notificação não lida' : 'notificações não lidas'}`
+      mensagem: `Você tem ${naoLidas} ${naoLidas === 1 ? 'notificação não lida' : 'notificações não lidas'}`,
     };
   }
 
   async markAsRead(userId: string, id: string) {
-    // Primeiro verifica se a notificação pertence ao usuário
     const notificacao = await this.notificacaoRepository.findByIdAndUser(id, userId);
-    
+
     if (!notificacao) {
       throw new NotFoundException('Notificação não encontrada');
     }
 
-    if (notificacao.lida) {
-      return notificacao; // Já está lida
-    }
+    if (notificacao.lida) return notificacao;
 
     return this.notificacaoRepository.markAsRead(id);
   }
 
-  async markAllAsRead(userId: string): Promise<{ count: number; message: string }> {
+  async markAllAsRead(userId: string) {
     const result = await this.notificacaoRepository.markAllAsRead(userId);
-    
-    // O resultado do updateMany retorna { count: number }
-    const count = result.count || 0;
-    
-    return {
-      count,
-      message: `${count} ${count === 1 ? 'notificação foi' : 'notificações foram'} marcada${count === 1 ? '' : 's'} como lida${count === 1 ? '' : 's'}`
-    };
+    return { count: result.count };
   }
 
   async delete(userId: string, id: string) {
-    // Verifica se a notificação pertence ao usuário
     const notificacao = await this.notificacaoRepository.findByIdAndUser(id, userId);
-    
+
     if (!notificacao) {
       throw new NotFoundException('Notificação não encontrada');
     }
@@ -74,16 +71,9 @@ export class NotificacoesService {
     return this.notificacaoRepository.delete(id);
   }
 
-  async deleteAllRead(userId: string): Promise<{ count: number; message: string }> {
+  async deleteAllRead(userId: string) {
     const result = await this.notificacaoRepository.deleteAllRead(userId);
-    
-    // O resultado do deleteMany retorna { count: number }
-    const count = result.count || 0;
-    
-    return {
-      count,
-      message: `${count} ${count === 1 ? 'notificação lida foi' : 'notificações lidas foram'} removida${count === 1 ? '' : 's'}`
-    };
+    return { count: result.count };
   }
 
   async getUnreadCount(userId: string): Promise<number> {
@@ -92,11 +82,17 @@ export class NotificacoesService {
 
   async getStats(userId: string) {
     const stats = await this.notificacaoRepository.getStats(userId);
-    const totalNaoLidas = await this.getUnreadCount(userId);
-    
+
+    const totalPorTipo = Object.entries(stats.totalPorTipo).map(([tipo, count]) => ({
+      tipo,
+      _count: count,
+    }));
+
     return {
-      ...stats,
-      totalNaoLidas
+      totalPorTipo,
+      ultimasSemana: stats.ultimasSemana,
+      totalNaoLidas: stats.naoLidas,
+      totalNotificacoes: stats.total,
     };
   }
 }

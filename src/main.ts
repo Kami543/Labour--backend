@@ -80,7 +80,7 @@ async function configureApp(app: any) {
     }),
   );
 
-  // CORS - Diferente por ambiente
+  // 🔥 CONFIGURAÇÃO CORS CORRIGIDA
   if (isProduction) {
     // Produção: apenas domínios específicos
     const corsOrigin = process.env.CORS_ORIGIN || 'https://laboure.vercel.app';
@@ -88,16 +88,35 @@ async function configureApp(app: any) {
       origin: corsOrigin.split(','),
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+      preflightContinue: false,
+      optionsSuccessStatus: 204,
     });
-    console.log(`🔒 CORS configurado para: ${corsOrigin}`);
+    console.log(`🔒 CORS configurado para produção: ${corsOrigin}`);
   } else {
-    // Desenvolvimento: libera tudo
+    // 🔓 Desenvolvimento: configuração completa para localhost
     app.enableCors({
-      origin: '*',
+      origin: [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:3000',
+        'http://localhost:3001',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+        'http://127.0.0.1:3000',
+        'http://127.0.0.1:3001',
+      ],
       credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+      exposedHeaders: ['Authorization'],
+      preflightContinue: false,
+      optionsSuccessStatus: 204,
     });
-    console.log('🔓 CORS liberado para qualquer origem (desenvolvimento)');
+    console.log('🔓 CORS configurado para desenvolvimento:');
+    console.log('   - http://localhost:5173');
+    console.log('   - http://localhost:3000');
+    console.log('   - http://127.0.0.1:5173');
   }
 
   // Prefixo global da API
@@ -200,7 +219,7 @@ async function bootstrapLocal() {
   
   await configureApp(app);
   
-  const portaDesejada = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  const portaDesejada = process.env.PORT ? parseInt(process.env.PORT) : 3001;
   await app.listen(portaDesejada);
   
   const logger = new Logger('Inicializacao');
@@ -212,6 +231,7 @@ async function bootstrapLocal() {
   
   logger.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'desenvolvimento'}`);
   logger.log(`📦 Banco de dados: ${process.env.DATABASE_URL ? 'Configurado' : 'Não configurado'}`);
+  logger.log(`🔓 CORS configurado para desenvolvimento`);
 }
 
 // Executa local apenas se não estiver no Vercel

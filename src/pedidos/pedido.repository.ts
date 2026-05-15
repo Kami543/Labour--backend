@@ -1,6 +1,8 @@
+// pedido.repository.ts - VERSÃO COMPLETA COM MÉTODOS ADMIN CORRIGIDOS
+
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Pedido } from '@prisma/client';
+import { Pedido, StatusPedido } from '@prisma/client';
 import { BaseRepository } from '../common/utils/baseRepository';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -14,6 +16,8 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     return this.prisma.pedido;
   }
 
+  // ========== MÉTODOS EXISTENTES ==========
+  
   async findByUser(userId: string, page?: number, limit?: number) {
     const skip = page && limit ? (page - 1) * limit : undefined;
     const take = limit;
@@ -57,7 +61,7 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     total: number;
     enderecoEntrega: any;
     observacoes?: string;
-    status: any;
+    status: StatusPedido;
   }) {
     return this.model.create({
       data: {
@@ -90,9 +94,6 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       ? data.precoUnitario 
       : new Decimal(data.precoUnitario);
     
-    // Calculate subtotal
-    const subtotal = precoUnitario.times(data.quantidade);
-    
     return this.prisma.pedidoItem.create({
       data: {
         pedidoId: data.pedidoId,
@@ -105,7 +106,7 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     });
   }
 
-  async updateStatus(id: string, status: any, dataEnvio?: Date, codigoRastreio?: string) {
+  async updateStatus(id: string, status: StatusPedido, dataEnvio?: Date, codigoRastreio?: string) {
     const updateData: any = { status };
     if (dataEnvio) updateData.dataEnvio = dataEnvio;
     if (codigoRastreio) updateData.codigoRastreio = codigoRastreio;
@@ -113,7 +114,13 @@ export class PedidoRepository extends BaseRepository<Pedido> {
 
     return this.model.update({
       where: { id },
-      data: updateData
+      data: updateData,
+      include: {
+        itens: {
+          include: { produto: true }
+        },
+        user: true
+      }
     });
   }
 
@@ -130,5 +137,303 @@ export class PedidoRepository extends BaseRepository<Pedido> {
 
   private generateNumeroPedido(): string {
     return `PED-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+  }
+
+  // ========== NOVOS MÉTODOS PARA ADMIN ==========
+
+  /**
+   * Buscar pedido por ID sem restrição de usuário (para admin)
+   * CORRIGIDO - incluindo itens
+   */
+  async findById(id: string) {
+    return this.model.findUnique({
+      where: { id },
+      include: {
+        itens: {  // <-- INCLUÍDO PARA RESOLVER O ERRO
+          include: { 
+            produto: {
+              select: {
+                id: true,
+                nome: true,
+                imagem: true,
+                preco: true,
+                slug: true,
+              }
+            }
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            cpf: true,
+            // telefone: true,  // <-- COMENTADO OU REMOVIDO
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Buscar todos os pedidos com filtros e paginação (para admin)
+   */
+  async findAllWithFilters(where: any, skip: number, take: number) {
+    return this.model.findMany({
+      where,
+      skip,
+      take,
+      include: {
+        itens: {
+          include: { 
+            produto: {
+              select: {
+                id: true,
+                nome: true,
+                imagem: true,
+                preco: true,
+              }
+            }
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            cpf: true,
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  /**
+   * Contar total de pedidos com filtros (para admin)
+   */
+  async countAllWithFilters(where: any) {
+    return this.model.count({ where });
+  }
+
+  /**
+   * Buscar pedidos por status (para admin)
+   */
+  async findByStatus(status: StatusPedido, page?: number, limit?: number) {
+    const skip = page && limit ? (page - 1) * limit : undefined;
+    const take = limit;
+
+    return this.model.findMany({
+      where: { status },
+      skip,
+      take,
+      include: {
+        itens: {
+          include: { produto: true }
+        },
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  /**
+   * Buscar pedidos por período (para admin)
+   */
+  async findByPeriod(startDate: Date, endDate: Date, page?: number, limit?: number) {
+    const skip = page && limit ? (page - 1) * limit : undefined;
+    const take = limit;
+
+    return this.model.findMany({
+      where: {
+        createdAt: {
+          gte: startDate,
+          lte: endDate,
+        }
+      },
+      skip,
+      take,
+      include: {
+        itens: {
+          include: { produto: true }
+        },
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  /**
+   * Buscar estatísticas de pedidos (para dashboard admin)
+   */
+  async getOrderStats() {
+    const [total, pending, paid, shipped, delivered, cancelled, totalValue] = await Promise.all([
+      this.model.count(),
+      this.model.count({ where: { status: 'pendente' } }),
+      this.model.count({ where: { status: 'pagamento_confirmado' } }),
+      this.model.count({ where: { status: 'enviado' } }),
+      this.model.count({ where: { status: 'entregue' } }),
+      this.model.count({ where: { status: 'cancelado' } }),
+      this.model.aggregate({
+        _sum: {
+          total: true
+        }
+      }),
+    ]);
+
+    return {
+      total,
+      pending,
+      paid,
+      shipped,
+      delivered,
+      cancelled,
+      totalRevenue: totalValue._sum.total || 0,
+    };
+  }
+
+  /**
+   * Buscar pedidos recentes (para dashboard admin)
+   */
+  async findRecentOrders(limit: number = 10) {
+    return this.model.findMany({
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          }
+        },
+        itens: {
+          take: 3,
+          include: {
+            produto: {
+              select: {
+                nome: true,
+                imagem: true,
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Atualizar código de rastreio de um pedido
+   */
+  async updateRastreio(id: string, codigoRastreio: string) {
+    return this.model.update({
+      where: { id },
+      data: { 
+        codigoRastreio,
+        dataEnvio: new Date(),
+        status: 'enviado'
+      },
+      include: {
+        itens: {
+          include: { produto: true }
+        },
+        user: true
+      }
+    });
+  }
+
+  /**
+   * Buscar pedidos por cliente (email, nome ou CPF)
+   */
+  async findByCliente(searchTerm: string, page?: number, limit?: number) {
+    const skip = page && limit ? (page - 1) * limit : undefined;
+    const take = limit;
+
+    return this.model.findMany({
+      where: {
+        OR: [
+          { user: { email: { contains: searchTerm, mode: 'insensitive' } } },
+          { user: { nome: { contains: searchTerm, mode: 'insensitive' } } },
+          { user: { cpf: { contains: searchTerm } } },
+          { numero: { contains: searchTerm, mode: 'insensitive' } },
+        ]
+      },
+      skip,
+      take,
+      include: {
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            cpf: true,
+          }
+        },
+        itens: {
+          include: { 
+            produto: {
+              select: {
+                id: true,
+                nome: true,
+                imagem: true,
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  /**
+   * Contar pedidos por status (para dashboard)
+   */
+  async countByStatus() {
+    const statuses = Object.values(StatusPedido);
+    const counts = await Promise.all(
+      statuses.map(async (status) => ({
+        status,
+        count: await this.model.count({ where: { status } })
+      }))
+    );
+    return counts;
+  }
+
+  /**
+   * Buscar faturamento por período
+   */
+  async getRevenueByPeriod(startDate: Date, endDate: Date) {
+    const result = await this.model.aggregate({
+      where: {
+        createdAt: {
+          gte: startDate,
+          lte: endDate,
+        },
+        status: {
+          not: 'cancelado'
+        }
+      },
+      _sum: {
+        total: true
+      },
+      _count: true
+    });
+
+    return {
+      totalRevenue: result._sum.total || 0,
+      totalOrders: result._count,
+    };
   }
 }

@@ -20,7 +20,7 @@ export class AuthController {
       const result = await this.authService.register(registerDto);
       this.logger.log(`✅ Usuário registrado com sucesso: ${registerDto.email}`);
       return result;
-    } catch (error) {
+    } catch (error:any) {
       this.logger.error(`❌ Erro no registro: ${error.message}`);
       throw error;
     }
@@ -37,7 +37,7 @@ export class AuthController {
       const result = await this.authService.login(loginDto);
       this.logger.log(`✅ Login realizado com sucesso: ${loginDto.email}`);
       return result;
-    } catch (error) {
+    } catch (error:any) {
       this.logger.error(`❌ Falha no login para ${loginDto.email}: ${error.message}`);
       throw error;
     }

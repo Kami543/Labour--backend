@@ -112,7 +112,7 @@ export class MercadoPagoGateway {
         expiracao,
         valor: params.valor,
       };
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error(`Falha ao criar PIX no MercadoPago: ${JSON.stringify(err.response?.data)}`);
       throw new InternalServerErrorException('Falha ao gerar PIX. Tente novamente.');
     }
@@ -172,7 +172,7 @@ export class MercadoPagoGateway {
         expiracao,
         valor: params.valor,
       };
-    } catch (err) {
+    } catch (err: any) {
       this.logger.error(`Falha ao criar boleto no MercadoPago: ${JSON.stringify(err.response?.data)}`);
       throw new InternalServerErrorException('Falha ao gerar boleto. Tente novamente.');
     }
@@ -223,7 +223,7 @@ export class MercadoPagoGateway {
         ultimosDigitos: data.card?.last_four_digits || '',
         receiptUrl: data.transaction_details?.acquirer_reference,
       };
-    } catch (err) {
+    } catch (err: any) {
       const mpError = err.response?.data?.cause?.[0];
       this.logger.error(`Falha no cartão MP: ${JSON.stringify(err.response?.data)}`);
 
