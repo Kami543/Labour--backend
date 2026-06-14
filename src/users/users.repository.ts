@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { User } from '@prisma/client';
 import { BaseRepository } from '../common/utils/baseRepository';
@@ -22,7 +22,7 @@ export class UserRepository extends BaseRepository<User> {
         where: { email },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'buscar usuário por email');
     }
   }
 
@@ -32,7 +32,7 @@ export class UserRepository extends BaseRepository<User> {
         where: { cpf },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'buscar usuário por CPF');
     }
   }
 
@@ -40,11 +40,11 @@ export class UserRepository extends BaseRepository<User> {
     try {
       const user = await this.model.findUnique({
         where: { email },
-        select: { id: true }, // só seleciona o ID (mais leve)
+        select: { id: true },
       });
       return !!user;
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'verificar existência de email');
     }
   }
 
@@ -56,7 +56,7 @@ export class UserRepository extends BaseRepository<User> {
       });
       return !!user;
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'verificar existência de CPF');
     }
   }
 
@@ -66,7 +66,7 @@ export class UserRepository extends BaseRepository<User> {
         where: { userId },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'contar pedidos do usuário');
     }
   }
 
@@ -76,7 +76,7 @@ export class UserRepository extends BaseRepository<User> {
         where: { userId },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'contar itens do carrinho');
     }
   }
 
@@ -86,7 +86,7 @@ export class UserRepository extends BaseRepository<User> {
         where: { userId, lida: false },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'contar notificações não lidas');
     }
   }
 
@@ -94,10 +94,25 @@ export class UserRepository extends BaseRepository<User> {
     try {
       return await this.prisma.pedido.findMany({
         where: { userId },
+        include: {
+          itens: {
+            include: {
+              produto: {
+                include: {
+                  imagens: {
+                    where: { isPrincipal: true },
+                    take: 1,
+                    select: { url: true }
+                  }
+                }
+              }
+            }
+          }
+        },
         orderBy: { createdAt: 'desc' },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'buscar pedidos do usuário');
     }
   }
 
@@ -105,10 +120,20 @@ export class UserRepository extends BaseRepository<User> {
     try {
       return await this.prisma.cartItem.findMany({
         where: { userId },
-        include: { produto: true },
+        include: { 
+          produto: {
+            include: {
+              imagens: {
+                where: { isPrincipal: true },
+                take: 1,
+                select: { url: true }
+              }
+            }
+          }
+        },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'buscar carrinho do usuário');
     }
   }
 
@@ -119,18 +144,145 @@ export class UserRepository extends BaseRepository<User> {
         orderBy: { createdAt: 'desc' },
       });
     } catch (error) {
-      this.handlePrismaError(error);
+      this.handlePrismaError(error, 'buscar notificações do usuário');
     }
   }
 
-  // 👇 Tratamento centralizado do erro P2024
-  private handlePrismaError(error: any): never {
-    if (error?.code === 'P2024') {
-      this.logger.error('Timeout na conexão com o banco de dados (P2024)');
-      throw new ConflictException(
-        'O servidor está temporariamente ocupado. Por favor, tente novamente em alguns instantes.',
-      );
+  async updateLastLogin(id: string, ip: string) {
+    try {
+      return await this.model.update({
+        where: { id },
+        data: {
+          lastLoginAt: new Date(),
+          lastLoginIp: ip,
+          failedLoginAttempts: 0
+        }
+      });
+    } catch (error) {
+      this.handlePrismaError(error, 'atualizar último login');
     }
-    throw error;
+  }
+
+  async incrementFailedAttempts(id: string) {
+    try {
+      return await this.model.update({
+        where: { id },
+        data: {
+          failedLoginAttempts: { increment: 1 }
+        }
+      });
+    } catch (error) {
+      this.handlePrismaError(error, 'incrementar tentativas falhas');
+    }
+  }
+
+  async lockUser(id: string, durationMinutes: number = 30) {
+    try {
+      const lockedUntil = new Date();
+      lockedUntil.setMinutes(lockedUntil.getMinutes() + durationMinutes);
+      
+      return await this.model.update({
+        where: { id },
+        data: {
+          lockedUntil,
+          failedLoginAttempts: 0
+        }
+      });
+    } catch (error) {
+      this.handlePrismaError(error, 'bloquear usuário');
+    }
+  }
+
+  async enableTwoFactor(id: string, secret: string) {
+    try {
+      return await this.model.update({
+        where: { id },
+        data: {
+          twoFactorEnabled: true,
+          twoFactorSecret: secret
+        }
+      });
+    } catch (error) {
+      this.handlePrismaError(error, 'ativar 2FA');
+    }
+  }
+
+  async disableTwoFactor(id: string) {
+    try {
+      return await this.model.update({
+        where: { id },
+        data: {
+          twoFactorEnabled: false,
+          twoFactorSecret: null
+        }
+      });
+    } catch (error) {
+      this.handlePrismaError(error, 'desativar 2FA');
+    }
+  }
+
+  async findWithPedidos(id: string) {
+    try {
+      const user = await this.model.findUnique({
+        where: { id },
+        include: {
+          pedidos: {
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            include: {
+              itens: {
+                include: {
+                  produto: {
+                    include: {
+                      imagens: {
+                        where: { isPrincipal: true },
+                        take: 1,
+                        select: { url: true }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      });
+      
+      if (!user) {
+        throw new NotFoundException('Usuário não encontrado');
+      }
+      
+      return user;
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      this.handlePrismaError(error, 'buscar usuário com pedidos');
+    }
+  }
+
+  // ✅ CORRIGIDO: getDashboardStats - usando userId corretamente
+  async getDashboardStats(userId: string) {
+    try {
+      const [pedidosCount, carrinhoCount, notificacoesCount, ultimoPedido, user] = await Promise.all([
+        this.countPedidos(userId),
+        this.countCarrinho(userId),
+        this.countNotificacoesNaoLidas(userId),
+        this.prisma.pedido.findFirst({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+          select: { createdAt: true, total: true, status: true }
+        }),
+        this.findById(userId) // Busca o usuário para obter o createdAt
+      ]);
+
+      return {
+        pedidosCount,
+        carrinhoCount,
+        notificacoesCount,
+        ultimoPedido,
+        membroDesde: user?.createdAt // Usa o createdAt do usuário encontrado
+      };
+    } catch (error) {
+      this.handlePrismaError(error, 'buscar estatísticas do dashboard');
+    }
   }
 }

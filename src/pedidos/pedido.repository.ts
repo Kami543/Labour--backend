@@ -1,4 +1,4 @@
-// pedido.repository.ts - VERSÃO COMPLETA COM MÉTODOS ADMIN CORRIGIDOS
+// pedido.repository.ts - VERSÃO CORRIGIDA (sem campo 'imagem')
 
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,7 +28,17 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       take,
       include: {
         itens: {
-          include: { produto: true }
+          include: { 
+            produto: {
+              include: {
+                imagens: {
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
+              }
+            }
+          }
         }
       },
       orderBy: { createdAt: 'desc' }
@@ -40,16 +50,55 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       where: { id, userId },
       include: {
         itens: {
-          include: { produto: true }
+          include: { 
+            produto: {
+              include: {
+                imagens: {
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
+              }
+            }
+          }
         },
-        user: true
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+            cpf: true,
+          }
+        }
       }
     });
   }
 
   async findByNumero(numero: string) {
     return this.model.findUnique({
-      where: { numero }
+      where: { numero },
+      include: {
+        itens: {
+          include: { 
+            produto: {
+              include: {
+                imagens: {
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
+              }
+            }
+          }
+        },
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          }
+        }
+      }
     });
   }
 
@@ -77,7 +126,13 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       },
       include: {
         itens: true,
-        user: true
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          }
+        }
       }
     });
   }
@@ -117,9 +172,25 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       data: updateData,
       include: {
         itens: {
-          include: { produto: true }
+          include: { 
+            produto: {
+              include: {
+                imagens: {
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
+              }
+            }
+          }
         },
-        user: true
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          }
+        }
       }
     });
   }
@@ -139,25 +210,29 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     return `PED-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   }
 
-  // ========== NOVOS MÉTODOS PARA ADMIN ==========
+  // ========== MÉTODOS PARA ADMIN (CORRIGIDOS) ==========
 
   /**
    * Buscar pedido por ID sem restrição de usuário (para admin)
-   * CORRIGIDO - incluindo itens
+   * CORRIGIDO - sem campo 'imagem'
    */
   async findById(id: string) {
     return this.model.findUnique({
       where: { id },
       include: {
-        itens: {  // <-- INCLUÍDO PARA RESOLVER O ERRO
+        itens: {
           include: { 
             produto: {
               select: {
                 id: true,
                 nome: true,
-                imagem: true,
                 preco: true,
                 slug: true,
+                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
               }
             }
           }
@@ -168,7 +243,6 @@ export class PedidoRepository extends BaseRepository<Pedido> {
             nome: true,
             email: true,
             cpf: true,
-            // telefone: true,  // <-- COMENTADO OU REMOVIDO
           }
         }
       }
@@ -177,6 +251,7 @@ export class PedidoRepository extends BaseRepository<Pedido> {
 
   /**
    * Buscar todos os pedidos com filtros e paginação (para admin)
+   * CORRIGIDO - sem campo 'imagem'
    */
   async findAllWithFilters(where: any, skip: number, take: number) {
     return this.model.findMany({
@@ -190,8 +265,13 @@ export class PedidoRepository extends BaseRepository<Pedido> {
               select: {
                 id: true,
                 nome: true,
-                imagem: true,
                 preco: true,
+                slug: true,
+                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
               }
             }
           }
@@ -229,7 +309,17 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       take,
       include: {
         itens: {
-          include: { produto: true }
+          include: { 
+            produto: {
+              include: {
+                imagens: {
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
+              }
+            }
+          }
         },
         user: {
           select: {
@@ -261,7 +351,17 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       take,
       include: {
         itens: {
-          include: { produto: true }
+          include: { 
+            produto: {
+              include: {
+                imagens: {
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
+              }
+            }
+          }
         },
         user: {
           select: {
@@ -306,6 +406,7 @@ export class PedidoRepository extends BaseRepository<Pedido> {
 
   /**
    * Buscar pedidos recentes (para dashboard admin)
+   * CORRIGIDO - sem campo 'imagem'
    */
   async findRecentOrders(limit: number = 10) {
     return this.model.findMany({
@@ -325,7 +426,11 @@ export class PedidoRepository extends BaseRepository<Pedido> {
             produto: {
               select: {
                 nome: true,
-                imagem: true,
+                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
               }
             }
           }
@@ -347,15 +452,32 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       },
       include: {
         itens: {
-          include: { produto: true }
+          include: { 
+            produto: {
+              include: {
+                imagens: {
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
+              }
+            }
+          }
         },
-        user: true
+        user: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
+          }
+        }
       }
     });
   }
 
   /**
    * Buscar pedidos por cliente (email, nome ou CPF)
+   * CORRIGIDO - sem campo 'imagem'
    */
   async findByCliente(searchTerm: string, page?: number, limit?: number) {
     const skip = page && limit ? (page - 1) * limit : undefined;
@@ -387,7 +509,13 @@ export class PedidoRepository extends BaseRepository<Pedido> {
               select: {
                 id: true,
                 nome: true,
-                imagem: true,
+                preco: true,
+                slug: true,
+                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
+                  where: { isPrincipal: true },
+                  take: 1,
+                  select: { url: true }
+                }
               }
             }
           }

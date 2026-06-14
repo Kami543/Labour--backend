@@ -1,33 +1,47 @@
-// produto.dto.ts
-
 import {
   IsString,
   IsNumber,
   IsPositive,
   IsOptional,
-  IsEnum,
   IsArray,
   ArrayMinSize,
   IsDecimal,
   Min,
   Max,
+  IsUrl,
+  IsBoolean,
+  IsUUID,
+  MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
- * Enum de categorias de produto
+ * DTO para imagem do produto
  */
-export enum CategoriaProduto {
-  FEMININO = 'Feminino',
-  MASCULINO = 'Masculino',
-  ACESSORIOS = 'Acessorios',
+export class CreateProdutoImagemDto {
+  @IsUrl({}, { message: 'URL da imagem deve ser válida' })
+  url: string;
+
+  @IsString({ message: 'Texto alternativo deve ser uma string' })
+  @IsOptional()
+  altText?: string;
+
+  @IsNumber({}, { message: 'Ordem deve ser um número' })
+  @Min(0, { message: 'Ordem não pode ser negativa' })
+  @IsOptional()
+  ordem?: number;
+
+  @IsBoolean({ message: 'isPrincipal deve ser booleano' })
+  @IsOptional()
+  isPrincipal?: boolean;
 }
 
 /**
- * DTO para criar um novo produto
+ * DTO para criar um novo produto (com múltiplas imagens)
  */
 export class CreateProdutoDto {
   @IsString({ message: 'Nome deve ser uma string' })
+  @MinLength(3, { message: 'Nome deve ter no mínimo 3 caracteres' })
   nome: string;
 
   @IsString({ message: 'Descrição deve ser uma string' })
@@ -39,13 +53,9 @@ export class CreateProdutoDto {
   @Type(() => Number)
   preco: number;
 
-  @IsString({ message: 'Imagem deve ser uma URL' })
-  imagem: string;
-
-  @IsEnum(CategoriaProduto, {
-    message: 'Categoria deve ser: Feminino, Masculino ou Acessorios',
-  })
-  categoria: CategoriaProduto;
+  @IsString({ message: 'Categoria deve ser uma string' })
+  @MinLength(2, { message: 'Categoria deve ter no mínimo 2 caracteres' })
+  categoria: string; // Agora é string livre
 
   @IsString({ message: 'Tag deve ser uma string' })
   @IsOptional()
@@ -63,6 +73,10 @@ export class CreateProdutoDto {
   @IsArray({ message: 'Tamanhos deve ser um array' })
   @ArrayMinSize(1, { message: 'Deve ter no mínimo 1 tamanho' })
   tamanhos: string[];
+
+  @IsArray({ message: 'Imagens deve ser um array' })
+  @IsOptional()
+  imagens?: CreateProdutoImagemDto[];
 }
 
 /**
@@ -70,6 +84,7 @@ export class CreateProdutoDto {
  */
 export class UpdateProdutoDto {
   @IsString({ message: 'Nome deve ser uma string' })
+  @MinLength(3, { message: 'Nome deve ter no mínimo 3 caracteres' })
   @IsOptional()
   nome?: string;
 
@@ -83,15 +98,10 @@ export class UpdateProdutoDto {
   @Type(() => Number)
   preco?: number;
 
-  @IsString({ message: 'Imagem deve ser uma URL' })
+  @IsString({ message: 'Categoria deve ser uma string' })
+  @MinLength(2, { message: 'Categoria deve ter no mínimo 2 caracteres' })
   @IsOptional()
-  imagem?: string;
-
-  @IsEnum(CategoriaProduto, {
-    message: 'Categoria deve ser: Feminino, Masculino ou Acessorios',
-  })
-  @IsOptional()
-  categoria?: CategoriaProduto;
+  categoria?: string;
 
   @IsString({ message: 'Tag deve ser uma string' })
   @IsOptional()
@@ -115,6 +125,27 @@ export class UpdateProdutoDto {
 }
 
 /**
+ * DTO para resposta de imagem
+ */
+export class ProdutoImagemResponseDto {
+  id: string;
+  url: string;
+  altText?: string;
+  ordem: number;
+  isPrincipal: boolean;
+  createdAt: Date;
+
+  constructor(imagem: any) {
+    this.id = imagem.id;
+    this.url = imagem.url;
+    this.altText = imagem.altText;
+    this.ordem = imagem.ordem;
+    this.isPrincipal = imagem.isPrincipal;
+    this.createdAt = imagem.createdAt;
+  }
+}
+
+/**
  * DTO para resposta de produto
  */
 export class ProdutoResponseDto {
@@ -123,12 +154,12 @@ export class ProdutoResponseDto {
   slug: string;
   descricao: string;
   preco: number;
-  imagem: string;
-  categoria: CategoriaProduto;
+  categoria: string;
   tag: string;
   estoque: number;
   cores: string[];
   tamanhos: string[];
+  imagens: ProdutoImagemResponseDto[];
   createdAt: Date;
   updatedAt: Date;
 
@@ -136,11 +167,10 @@ export class ProdutoResponseDto {
     this.id = produto.id;
     this.nome = produto.nome;
     this.slug = produto.slug;
-    this.descricao = produto.descricao;
+    this.descricao = produto.descricao || '';
     this.preco = parseFloat(produto.preco);
-    this.imagem = produto.imagem;
     this.categoria = produto.categoria;
-    this.tag = produto.tag;
+    this.tag = produto.tag || '';
     this.estoque = produto.estoque;
     
     // Cores
@@ -161,6 +191,13 @@ export class ProdutoResponseDto {
       this.tamanhos = [];
     }
     
+    // Imagens
+    if (produto.imagens && Array.isArray(produto.imagens)) {
+      this.imagens = produto.imagens.map(img => new ProdutoImagemResponseDto(img));
+    } else {
+      this.imagens = [];
+    }
+    
     this.createdAt = produto.createdAt;
     this.updatedAt = produto.updatedAt;
   }
@@ -173,75 +210,78 @@ export class ProdutoDetailResponseDto extends ProdutoResponseDto {
   avaliacaoMedia: number;
   totalAvaliacoes: number;
   emEstoque: boolean;
-  descontoPercentual: number;
+  imagemPrincipal?: string;
 
   constructor(
     produto: any,
     avaliacaoMedia: number = 0,
     totalAvaliacoes: number = 0,
-    descontoPercentual: number = 0,
   ) {
     super(produto);
     this.avaliacaoMedia = Math.round(avaliacaoMedia * 10) / 10;
     this.totalAvaliacoes = totalAvaliacoes;
     this.emEstoque = this.estoque > 0;
-    this.descontoPercentual = descontoPercentual;
-    }
+    
+    // Pega a imagem principal ou a primeira imagem
+    const imagemPrincipal = this.imagens.find(img => img.isPrincipal) || this.imagens[0];
+    this.imagemPrincipal = imagemPrincipal?.url;
   }
-
+}
 
 /**
  * DTO para filtro de produtos
  */
 export class FilterProdutoDto {
   @IsOptional()
-  @IsEnum(CategoriaProduto)
-  categoria: CategoriaProduto;
+  @IsString({ message: 'Categoria deve ser uma string' })
+  categoria?: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber({}, { message: 'Preço mínimo deve ser um número' })
-  precoMin: number;
+  @Min(0, { message: 'Preço mínimo não pode ser negativo' })
+  precoMin?: number;
 
   @IsOptional()
   @Type(() => Number)
   @IsNumber({}, { message: 'Preço máximo deve ser um número' })
-  precoMax: number;
+  @Min(0, { message: 'Preço máximo não pode ser negativo' })
+  precoMax?: number;
 
   @IsOptional()
   @IsString({ message: 'Tag deve ser uma string' })
-  tag: string;
+  tag?: string;
 
   @IsOptional()
   @IsString({ message: 'Termo de busca deve ser uma string' })
-  busca: string;
+  busca?: string;
 
   @IsOptional()
   @IsArray({ message: 'Cores deve ser um array' })
-  cores: string[];
+  cores?: string[];
 
   @IsOptional()
   @IsArray({ message: 'Tamanhos deve ser um array' })
-  tamanhos: string[];
+  tamanhos?: string[];
 
   @IsOptional()
   @Type(() => Number)
   @Min(1, { message: 'Página deve ser no mínimo 1' })
-  page: number = 1;
+  page?: number = 1;
 
   @IsOptional()
   @Type(() => Number)
   @Min(1, { message: 'Limit deve ser no mínimo 1' })
   @Max(100, { message: 'Limit deve ser no máximo 100' })
-  limit: number = 10;
+  limit?: number = 10;
 
   @IsOptional()
   @IsString({ message: 'Ordenação deve ser uma string' })
-  sort: 'nome' | 'preco' | 'createdAt' = 'createdAt';
+  sort?: 'nome' | 'preco' | 'createdAt' = 'createdAt';
 
   @IsOptional()
   @IsString({ message: 'Direção deve ser asc ou desc' })
-  order: 'asc' | 'desc' = 'desc';
+  order?: 'asc' | 'desc' = 'desc';
 }
 
 /**

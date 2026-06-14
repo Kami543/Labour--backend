@@ -1,3 +1,4 @@
+// src/modules/cart/cart.controller.ts
 import {
   Controller,
   Get,
@@ -31,7 +32,8 @@ export class CartController {
   async getCart(@CurrentUser('sub') userId: string) {
     this.logger.log(`Buscando carrinho do usuário: ${userId}`);
     const cart = await this.cartService.getCart(userId);
-    this.logger.log(`Encontrados ${cart.length} itens`);
+    // CORRIGIDO: agora cart é um objeto com propriedade items
+    this.logger.log(`Encontrados ${cart.items.length} itens`);
     return cart;
   }
 
@@ -45,14 +47,14 @@ export class CartController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Adicionar produto ao carrinho' })
   async addToCart(@CurrentUser('sub') userId: string, @Body() dto: AddToCartDto) {
     this.logger.log(`Adicionando produto ${dto.produtoId} ao carrinho`);
-    await this.cartService.addToCart(userId, dto);
+    const result = await this.cartService.addToCart(userId, dto);
     
-    // Retorna o carrinho completo atualizado
-    const updatedCart = await this.cartService.getCart(userId);
-    this.logger.log(`Carrinho agora tem ${updatedCart.length} itens`);
-    return updatedCart;
+    // CORRIGIDO: result já é o carrinho completo
+    this.logger.log(`Carrinho agora tem ${result.items.length} itens`);
+    return result;
   }
 
   @Put(':itemId')
@@ -63,19 +65,27 @@ export class CartController {
     @Body() dto: UpdateCartItemDto,
   ) {
     this.logger.log(`Atualizando item ${itemId}`);
-    await this.cartService.updateCartItem(userId, itemId, dto);
-    
-    const updatedCart = await this.cartService.getCart(userId);
+    const updatedCart = await this.cartService.updateCartItem(userId, itemId, dto);
+    // CORRIGIDO: updatedCart já é o carrinho completo
     return updatedCart;
   }
 
   @Delete(':itemId')
-  @HttpCode(HttpStatus.NO_CONTENT)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remover item do carrinho' })
   async removeFromCart(@CurrentUser('sub') userId: string, @Param('itemId') itemId: string) {
     this.logger.log(`Removendo item ${itemId} do carrinho`);
-    await this.cartService.removeFromCart(userId, itemId);
-    
-    const updatedCart = await this.cartService.getCart(userId);
+    const updatedCart = await this.cartService.removeFromCart(userId, itemId);
+    // CORRIGIDO: retorna o carrinho atualizado
     return updatedCart;
+  }
+
+  @Delete()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Limpar carrinho' })
+  async clearCart(@CurrentUser('sub') userId: string) {
+    this.logger.log(`Limpando carrinho do usuário ${userId}`);
+    const emptyCart = await this.cartService.clearCart(userId);
+    return emptyCart;
   }
 }

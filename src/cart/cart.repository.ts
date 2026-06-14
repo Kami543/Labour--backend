@@ -13,18 +13,24 @@ export class CartRepository extends BaseRepository<CartItem> {
     return this.prisma.cartItem;
   }
 
-  // Buscar carrinho completo do usuário
+  // Buscar carrinho completo do usuário (COM IMAGENS)
   async findCartByUser(userId: string) {
     return this.model.findMany({
       where: { userId },
       include: {
-        produto: true,
+        produto: {
+          include: {
+            imagens: {
+              orderBy: { ordem: 'asc' }
+            }
+          }
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
   }
 
-  // Buscar item específico no carrinho
+  // Buscar item específico no carrinho (COM IMAGENS)
   async findCartItem(
     userId: string,
     produtoId: string,
@@ -38,19 +44,35 @@ export class CartRepository extends BaseRepository<CartItem> {
         tamanho: tamanho || null,
         cor: cor || null,
       },
-      include: { produto: true },
+      include: { 
+        produto: {
+          include: {
+            imagens: {
+              orderBy: { ordem: 'asc' }
+            }
+          }
+        }
+      },
     });
   }
 
-  // Buscar por ID e usuário (para segurança)
+  // Buscar por ID e usuário (para segurança) (COM IMAGENS)
   async findByIdAndUser(id: string, userId: string) {
     return this.model.findFirst({
       where: { id, userId },
-      include: { produto: true },
+      include: { 
+        produto: {
+          include: {
+            imagens: {
+              orderBy: { ordem: 'asc' }
+            }
+          }
+        }
+      },
     });
   }
 
-  // Adicionar item ao carrinho
+  // Adicionar item ao carrinho (COM IMAGENS)
   async addItem(data: {
     userId: string;
     produtoId: string;
@@ -66,16 +88,32 @@ export class CartRepository extends BaseRepository<CartItem> {
         tamanho: data.tamanho,
         cor: data.cor,
       },
-      include: { produto: true },
+      include: { 
+        produto: {
+          include: {
+            imagens: {
+              orderBy: { ordem: 'asc' }
+            }
+          }
+        }
+      },
     });
   }
 
-  // Atualizar quantidade
+  // Atualizar quantidade (COM IMAGENS)
   async updateQuantidade(id: string, quantidade: number) {
     return this.model.update({
       where: { id },
       data: { quantidade },
-      include: { produto: true },
+      include: { 
+        produto: {
+          include: {
+            imagens: {
+              orderBy: { ordem: 'asc' }
+            }
+          }
+        }
+      },
     });
   }
 
@@ -92,4 +130,68 @@ export class CartRepository extends BaseRepository<CartItem> {
       where: { userId },
     });
   }
-}
+
+  // Método para verificar se produto está no carrinho
+  async isProductInCart(userId: string, produtoId: string): Promise<boolean> {
+    const count = await this.model.count({
+      where: {
+        userId,
+        produtoId,
+      },
+    });
+    return count > 0;
+  }
+
+  // Obter quantidade total de itens no carrinho
+  async getTotalItemsCount(userId: string): Promise<number> {
+    const items = await this.model.findMany({
+      where: { userId },
+      select: { quantidade: true },
+    });
+    return items.reduce((total, item) => total + item.quantidade, 0);
+  }
+
+  // Obter subtotal do carrinho
+  async getCartSubtotal(userId: string): Promise<number> {
+    const items = await this.model.findMany({
+      where: { userId },
+      include: {
+        produto: {
+          select: { preco: true }
+        }
+      },
+    });
+    
+    return items.reduce((total, item) => {
+      return total + (Number(item.produto.preco) * item.quantidade);
+    }, 0);
+  }
+
+  // Remover múltiplos itens de uma vez
+  async removeItems(itemIds: string[]): Promise<void> {
+    await this.model.deleteMany({
+      where: {
+        id: { in: itemIds },
+      },
+    });
+  }
+
+  // Buscar carrinho com informações resumidas (sem detalhes pesados)
+  async findCartSummary(userId: string) {
+    return this.model.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        quantidade: true,
+        produtoId: true,
+        produto: {
+          select: {
+            nome: true,
+            preco: true,
+            // imagem: true, ← REMOVA ESTA LINHA
+            slug: true,
+            estoque: true,
+          }
+        }
+      },
+    });}}

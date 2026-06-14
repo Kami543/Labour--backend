@@ -30,7 +30,11 @@ export class AvaliacaoRepository extends BaseRepository<Avaliacao> {
       take,
       include: {
         user: {
-          select: { nome: true }
+          select: { 
+            id: true,
+            nome: true,
+            email: true
+          }
         }
       },
       orderBy: { createdAt: 'desc' }
@@ -42,7 +46,17 @@ export class AvaliacaoRepository extends BaseRepository<Avaliacao> {
       where: { userId },
       include: {
         produto: {
-          select: { id: true, nome: true, imagem: true }
+          select: { 
+            id: true, 
+            nome: true,
+            slug: true,
+            preco: true,
+            imagens: {
+              where: { isPrincipal: true },
+              take: 1,
+              select: { url: true }
+            }
+          }
         }
       },
       orderBy: { createdAt: 'desc' }
@@ -51,7 +65,27 @@ export class AvaliacaoRepository extends BaseRepository<Avaliacao> {
 
   async findByIdAndUser(id: string, userId: string) {
     return this.model.findFirst({
-      where: { id, userId }
+      where: { id, userId },
+      include: {
+        produto: {
+          select: { 
+            id: true, 
+            nome: true,
+            imagens: {
+              where: { isPrincipal: true },
+              take: 1,
+              select: { url: true }
+            }
+          }
+        },
+        user: {
+          select: { 
+            id: true,
+            nome: true,
+            email: true
+          }
+        }
+      }
     });
   }
 
@@ -59,6 +93,19 @@ export class AvaliacaoRepository extends BaseRepository<Avaliacao> {
     return this.model.findUnique({
       where: {
         userId_produtoId: { userId, produtoId }
+      },
+      include: {
+        produto: {
+          select: { 
+            id: true, 
+            nome: true,
+            imagens: {
+              where: { isPrincipal: true },
+              take: 1,
+              select: { url: true }
+            }
+          }
+        }
       }
     });
   }
@@ -73,7 +120,24 @@ export class AvaliacaoRepository extends BaseRepository<Avaliacao> {
     return this.model.create({
       data,
       include: {
-        user: { select: { nome: true } }
+        user: { 
+          select: { 
+            id: true,
+            nome: true,
+            email: true
+          } 
+        },
+        produto: {
+          select: { 
+            id: true, 
+            nome: true,
+            imagens: {
+              where: { isPrincipal: true },
+              take: 1,
+              select: { url: true }
+            }
+          }
+        }
       }
     });
   }
@@ -85,7 +149,27 @@ export class AvaliacaoRepository extends BaseRepository<Avaliacao> {
   }) {
     return this.model.update({
       where: { id },
-      data
+      data,
+      include: {
+        user: { 
+          select: { 
+            id: true,
+            nome: true,
+            email: true
+          } 
+        },
+        produto: {
+          select: { 
+            id: true, 
+            nome: true,
+            imagens: {
+              where: { isPrincipal: true },
+              take: 1,
+              select: { url: true }
+            }
+          }
+        }
+      }
     });
   }
 
@@ -107,9 +191,83 @@ export class AvaliacaoRepository extends BaseRepository<Avaliacao> {
       where: { produtoId },
       _count: { nota: true }
     });
-    return result.reduce((acc, curr) => {
-      acc[curr.nota] = curr._count.nota;
-      return acc;
-    }, {} as Record<number, number>);
+    
+    const distribuicao: Record<number, number> = {};
+    for (let i = 1; i <= 5; i++) {
+      distribuicao[i] = 0;
+    }
+    
+    for (const item of result) {
+      distribuicao[item.nota] = item._count.nota;
+    }
+    
+    return distribuicao;
+  }
+
+  async getEstatisticasProduto(produtoId: string) {
+    const [media, total, distribuicao] = await Promise.all([
+      this.getMediaNota(produtoId),
+      this.countByProduto(produtoId),
+      this.getDistribuicaoNotas(produtoId)
+    ]);
+
+    return {
+      media: Math.round(media * 10) / 10,
+      total,
+      distribuicao,
+      percentuais: Object.entries(distribuicao).reduce((acc, [nota, count]) => {
+        acc[nota] = total > 0 ? Math.round((count / total) * 100) : 0;
+        return acc;
+      }, {} as Record<string, number>)
+    };
+  }
+
+  async findRecentByProduto(produtoId: string, limit: number = 5) {
+    return this.model.findMany({
+      where: { produtoId },
+      take: limit,
+      include: {
+        user: {
+          select: { 
+            id: true,
+            nome: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  async findAvaliacoesByNota(produtoId: string, nota: number) {
+    return this.model.findMany({
+      where: { 
+        produtoId,
+        nota 
+      },
+      include: {
+        user: {
+          select: { 
+            id: true,
+            nome: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+  }
+
+  async verificarCompraRealizada(userId: string, produtoId: string): Promise<boolean> {
+    const pedido = await this.prisma.pedido.findFirst({
+      where: {
+        userId,
+        status: 'entregue',
+        itens: {
+          some: {
+            produtoId
+          }
+        }
+      }
+    });
+    return !!pedido;
   }
 }

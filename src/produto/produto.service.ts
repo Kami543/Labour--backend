@@ -1,23 +1,40 @@
-// produto/produto.service.ts
-
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ProdutoRepository } from './produto.repository';
-import { CreateProdutoDto, UpdateProdutoDto, ProdutoResponseDto, ProdutoDetailResponseDto } from './dto/produto.dto';
+import { 
+  CreateProdutoDto, 
+  UpdateProdutoDto, 
+  ProdutoResponseDto, 
+  ProdutoDetailResponseDto, 
+  CreateProdutoImagemDto, 
+  ProdutoImagemResponseDto 
+} from './dto/produto.dto';
+import { slugify } from '../common/utils/slugify';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ProdutoService {
   private readonly logger = new Logger(ProdutoService.name);
   
-  constructor(private readonly produtoRepository: ProdutoRepository) {}
+  constructor(
+    private readonly produtoRepository: ProdutoRepository,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async create(createProdutoDto: CreateProdutoDto): Promise<ProdutoResponseDto> {
     this.logger.log('Criando novo produto...');
     
+    const slug = slugify(createProdutoDto.nome);
+    
+    const existingProduto = await this.produtoRepository.findBySlug(slug);
+    if (existingProduto) {
+      throw new BadRequestException('Já existe um produto com este nome');
+    }
+    
     const data = {
       nome: createProdutoDto.nome,
+      slug,
       descricao: createProdutoDto.descricao,
       preco: createProdutoDto.preco,
-      imagem: createProdutoDto.imagem,
       categoria: createProdutoDto.categoria,
       tag: createProdutoDto.tag,
       estoque: createProdutoDto.estoque,
@@ -25,7 +42,14 @@ export class ProdutoService {
       tamanhos: JSON.stringify(createProdutoDto.tamanhos),
     };
 
-    const produto = await this.produtoRepository.create(data);
+    const imagens = createProdutoDto.imagens?.map((img, index) => ({
+      url: img.url,
+      altText: img.altText || createProdutoDto.nome,
+      ordem: img.ordem !== undefined ? img.ordem : index,
+      isPrincipal: img.isPrincipal || index === 0
+    }));
+
+    const produto = await this.produtoRepository.createWithImages(data, imagens);
     this.logger.log(`Produto criado com ID: ${produto.id}`);
     return new ProdutoResponseDto(produto);
   }
@@ -38,7 +62,7 @@ export class ProdutoService {
 
   async findById(id: string): Promise<ProdutoResponseDto> {
     this.logger.log(`Buscando produto com ID: ${id}`);
-    const produto = await this.produtoRepository.findById(id);
+    const produto = await this.produtoRepository.findByIdWithImages(id);
     if (!produto) {
       this.logger.error(`Produto com ID ${id} não encontrado`);
       throw new NotFoundException('Produto não encontrado');
@@ -48,7 +72,7 @@ export class ProdutoService {
 
   async findDetail(id: string): Promise<ProdutoDetailResponseDto> {
     this.logger.log(`Buscando detalhes do produto com ID: ${id}`);
-    const produto = await this.produtoRepository.findById(id);
+    const produto = await this.produtoRepository.findByIdWithImages(id);
     if (!produto) {
       this.logger.error(`Produto com ID ${id} não encontrado`);
       throw new NotFoundException('Produto não encontrado');
@@ -125,10 +149,12 @@ export class ProdutoService {
 
     const updateData: any = {};
 
-    if (updateProdutoDto.nome !== undefined) updateData.nome = updateProdutoDto.nome;
+    if (updateProdutoDto.nome !== undefined) {
+      updateData.nome = updateProdutoDto.nome;
+      updateData.slug = slugify(updateProdutoDto.nome);
+    }
     if (updateProdutoDto.descricao !== undefined) updateData.descricao = updateProdutoDto.descricao;
     if (updateProdutoDto.preco !== undefined) updateData.preco = updateProdutoDto.preco;
-    if (updateProdutoDto.imagem !== undefined) updateData.imagem = updateProdutoDto.imagem;
     if (updateProdutoDto.categoria !== undefined) updateData.categoria = updateProdutoDto.categoria;
     if (updateProdutoDto.tag !== undefined) updateData.tag = updateProdutoDto.tag;
     if (updateProdutoDto.estoque !== undefined) updateData.estoque = updateProdutoDto.estoque;
@@ -143,6 +169,49 @@ export class ProdutoService {
     const updatedProduto = await this.produtoRepository.update(id, updateData);
     this.logger.log(`Produto com ID ${id} atualizado com sucesso`);
     return new ProdutoResponseDto(updatedProduto);
+  }
+
+  async addImagem(produtoId: string, imagemDto: CreateProdutoImagemDto): Promise<ProdutoImagemResponseDto> {
+    this.logger.log(`Adicionando imagem ao produto ${produtoId}`);
+    
+    const produto = await this.produtoRepository.findById(produtoId);
+    if (!produto) {
+      throw new NotFoundException('Produto não encontrado');
+    }
+    
+    const existingImagens = await this.prisma.produtoImagem.count({
+      where: { produtoId }
+    });
+    
+    const isFirstImage = existingImagens === 0;
+    const imagem = await this.produtoRepository.addImagem(produtoId, {
+      url: imagemDto.url,
+      altText: imagemDto.altText,
+      ordem: imagemDto.ordem !== undefined ? imagemDto.ordem : existingImagens,
+      isPrincipal: imagemDto.isPrincipal || isFirstImage
+    });
+    
+    if (imagem.isPrincipal) {
+      await this.produtoRepository.updateImagemPrincipal(produtoId, imagem.id);
+    }
+    
+    return new ProdutoImagemResponseDto(imagem);
+  }
+
+  async removeImagem(imagemId: string): Promise<void> {
+    this.logger.log(`Removendo imagem ${imagemId}`);
+    await this.produtoRepository.removeImagem(imagemId);
+  }
+
+  async setImagemPrincipal(produtoId: string, imagemId: string): Promise<void> {
+    this.logger.log(`Definindo imagem ${imagemId} como principal do produto ${produtoId}`);
+    
+    const produto = await this.produtoRepository.findById(produtoId);
+    if (!produto) {
+      throw new NotFoundException('Produto não encontrado');
+    }
+    
+    await this.produtoRepository.updateImagemPrincipal(produtoId, imagemId);
   }
 
   async updateEstoque(id: string, quantidade: number): Promise<ProdutoResponseDto> {

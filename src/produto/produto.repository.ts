@@ -1,12 +1,12 @@
-
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Produto } from '@prisma/client';
+import { Produto, ProdutoImagem } from '@prisma/client';
 import { BaseRepository } from '../common/utils/baseRepository';
-import { CategoriaProduto } from './dto/produto.dto';
 
 @Injectable()
 export class ProdutoRepository extends BaseRepository<Produto> {
+  private readonly logger = new Logger(ProdutoRepository.name);
+
   constructor(protected readonly prisma: PrismaService) {
     super(prisma);
   }
@@ -15,33 +15,91 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     return this.prisma.produto;
   }
 
-  async findBySlug(slug: string): Promise<Produto | null> {
+  async createWithImages(data: any, imagens?: any[]): Promise<Produto & { imagens: ProdutoImagem[] }> {
+    return this.model.create({
+      data: {
+        ...data,
+        imagens: imagens && imagens.length > 0 ? {
+          create: imagens
+        } : undefined
+      },
+      include: {
+        imagens: true
+      }
+    });
+  }
+
+  async findByIdWithImages(id: string): Promise<(Produto & { imagens: ProdutoImagem[] }) | null> {
+    return this.model.findUnique({
+      where: { id },
+      include: {
+        imagens: {
+          orderBy: {
+            ordem: 'asc'
+          }
+        }
+      }
+    });
+  }
+
+  async findBySlug(slug: string): Promise<(Produto & { imagens: ProdutoImagem[] }) | null> {
     return this.model.findFirst({
       where: { slug },
+      include: {
+        imagens: {
+          orderBy: {
+            ordem: 'asc'
+          }
+        }
+      }
     });
   }
 
   async findByCategoria(categoria: string): Promise<Produto[]> {
     return this.model.findMany({
-      where: { categoria: categoria as CategoriaProduto }, // Add type casting
+      where: { categoria },
+      include: {
+        imagens: {
+          where: { isPrincipal: true },
+          take: 1
+        }
+      }
     });
   }
 
   async findByTag(tag: string): Promise<Produto[]> {
     return this.model.findMany({
       where: { tag },
+      include: {
+        imagens: {
+          where: { isPrincipal: true },
+          take: 1
+        }
+      }
     });
   }
 
   async findEmEstoque(): Promise<Produto[]> {
     return this.model.findMany({
       where: { estoque: { gt: 0 } },
+      include: {
+        imagens: {
+          where: { isPrincipal: true },
+          take: 1
+        }
+      }
     });
   }
 
   async findComEstoqueBaixo(limite: number = 5): Promise<Produto[]> {
     return this.model.findMany({
       where: { estoque: { lte: limite } },
+      include: {
+        imagens: {
+          where: { isPrincipal: true },
+          take: 1
+        }
+      }
     });
   }
 
@@ -53,6 +111,12 @@ export class ProdutoRepository extends BaseRepository<Produto> {
       where: {
         createdAt: { gte: dataLimite },
       },
+      include: {
+        imagens: {
+          where: { isPrincipal: true },
+          take: 1
+        }
+      }
     });
   }
 
@@ -60,6 +124,10 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     return this.model.findMany({
       take: limit,
       include: {
+        imagens: {
+          where: { isPrincipal: true },
+          take: 1
+        },
         _count: { select: { avaliacoes: true } },
       },
       orderBy: {
@@ -73,13 +141,18 @@ export class ProdutoRepository extends BaseRepository<Produto> {
       where: {
         AND: [
           { id: { not: produtoId } },
-          { categoria: categoria as CategoriaProduto },
+          { categoria: categoria },
         ],
+      },
+      include: {
+        imagens: {
+          where: { isPrincipal: true },
+          take: 1
+        }
       },
       take: limit,
     });
   }
-  
 
   async updateEstoque(produtoId: string, quantidade: number): Promise<Produto> {
     return this.model.update({
@@ -120,11 +193,11 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     });
 
     const coresSet = new Set<string>();
-    for (let i = 0; i < produtos.length; i++) {
-      const cores = produtos[i].cores as string[];
+    for (const produto of produtos) {
+      const cores = produto.cores as string[];
       if (cores && Array.isArray(cores)) {
-        for (let j = 0; j < cores.length; j++) {
-          coresSet.add(cores[j]);
+        for (const cor of cores) {
+          coresSet.add(cor);
         }
       }
     }
@@ -137,14 +210,54 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     });
 
     const tamanhosSet = new Set<string>();
-    for (let i = 0; i < produtos.length; i++) {
-      const tamanhos = produtos[i].tamanhos as string[];
+    for (const produto of produtos) {
+      const tamanhos = produto.tamanhos as string[];
       if (tamanhos && Array.isArray(tamanhos)) {
-        for (let j = 0; j < tamanhos.length; j++) {
-          tamanhosSet.add(tamanhos[j]);
+        for (const tamanho of tamanhos) {
+          tamanhosSet.add(tamanho);
         }
       }
     }
     return Array.from(tamanhosSet).sort();
+  }
+
+  async addImagem(produtoId: string, imagemData: any): Promise<ProdutoImagem> {
+    return this.prisma.produtoImagem.create({
+      data: {
+        ...imagemData,
+        produtoId
+      }
+    });
+  }
+
+  async removeImagem(imagemId: string): Promise<void> {
+    await this.prisma.produtoImagem.delete({
+      where: { id: imagemId }
+    });
+  }
+
+  async updateImagemPrincipal(produtoId: string, imagemId: string): Promise<void> {
+    // Primeiro, remove isPrincipal de todas as imagens do produto
+    await this.prisma.produtoImagem.updateMany({
+      where: { produtoId },
+      data: { isPrincipal: false }
+    });
+    
+    // Depois, marca a nova imagem como principal
+    await this.prisma.produtoImagem.update({
+      where: { id: imagemId },
+      data: { isPrincipal: true }
+    });
+  }
+
+  async reorderImagens(produtoId: string, imagensOrdenadas: { id: string; ordem: number }[]): Promise<void> {
+    const updates = imagensOrdenadas.map(img => 
+      this.prisma.produtoImagem.update({
+        where: { id: img.id },
+        data: { ordem: img.ordem }
+      })
+    );
+    
+    await this.prisma.$transaction(updates);
   }
 }

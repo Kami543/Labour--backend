@@ -3,12 +3,12 @@
 generator client {
   provider = "prisma-client-js"
   binaryTargets = ["native", "linux-musl", "linux-musl-openssl-3.0.x"]
- }
+}
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-   directUrl = env("DIRECT_URL")  
+  directUrl = env("DIRECT_URL")  
 }
 
 // ──────────────────────────────────────
@@ -18,12 +18,6 @@ datasource db {
 enum Role {
   USER
   ADMIN
-}
-
-enum CategoriaProduto {
-  Feminino
-  Masculino
-  Acessorios
 }
 
 enum StatusPedido {
@@ -113,7 +107,7 @@ model User {
 }
 
 // ──────────────────────────────────────
-// PRODUTOS
+// PRODUTOS (MODIFICADO)
 // ──────────────────────────────────────
 
 model Produto {
@@ -122,8 +116,7 @@ model Produto {
   slug          String?          @unique
   descricao     String?
   preco         Decimal          @db.Decimal(10, 2)
-  imagem        String
-  categoria     CategoriaProduto
+  categoria     String           // Agora é String (ex: "Sapatos", "Bolsas", "Roupas", "Acessorios")
   tag           String?
   estoque       Int              @default(0)
   
@@ -134,6 +127,7 @@ model Produto {
   cartItems     CartItem[]
   pedidoItens   PedidoItem[]
   avaliacoes    Avaliacao[]
+  imagens       ProdutoImagem[]  // <- NOVO: Múltiplas imagens
   
   createdAt     DateTime         @default(now())
   updatedAt     DateTime         @updatedAt
@@ -142,6 +136,29 @@ model Produto {
   @@index([tag])
   @@index([createdAt])
   @@map("produtos")
+}
+
+// ──────────────────────────────────────
+// NOVO MODEL: IMAGENS DO PRODUTO
+// ──────────────────────────────────────
+
+model ProdutoImagem {
+  id            String   @id @default(uuid())
+  url           String   // URL da imagem no Supabase Storage
+  altText       String?  // Texto alternativo para SEO
+  ordem         Int      @default(0) // Ordem de exibição
+  isPrincipal   Boolean  @default(false) // Se é a imagem principal do produto
+  
+  produtoId     String
+  produto       Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([produtoId])
+  @@index([ordem])
+  @@index([isPrincipal])
+  @@map("produto_imagens")
 }
 
 // ──────────────────────────────────────
@@ -273,7 +290,6 @@ model Transacao {
   valor               Decimal        @db.Decimal(10, 2)
   status              StatusTransacao @default(AGUARDANDO_PAGAMENTO)
   
-  // Para PIX
   // Para PIX
   pixQrCode           String?        @db.Text  // QR Code base64
   pixQrCodeText       String?        @db.Text  // Código copia e cola

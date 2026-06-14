@@ -1,9 +1,21 @@
-// src/modules/cart/cart.service.ts
+// src/cart/cart.service.ts
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { CartRepository } from './cart.repository';
 import { ProdutoRepository } from '../produto/produto.repository';
 import { AddToCartDto } from './dto/cart.dto';
 import { UpdateCartItemDto } from './dto/cart.dto';
+
+// Adicione esta interface no topo do arquivo
+interface ValidationResult {
+  itemId: string;
+  produtoId: string;
+  nome: string;
+  available: boolean;
+  reason?: string;
+  requestedQuantity?: number;
+  availableQuantity?: number;
+  price?: number;
+}
 
 @Injectable()
 export class CartService {
@@ -15,7 +27,6 @@ export class CartService {
   async addToCart(userId: string, addToCartDto: AddToCartDto) {
     const { produtoId, quantidade, tamanho, cor } = addToCartDto;
 
-    // Verifica se o produto existe e tem estoque
     const produto = await this.produtoRepository.findById(produtoId);
     if (!produto) {
       throw new NotFoundException('Produto não encontrado');
@@ -25,7 +36,6 @@ export class CartService {
       throw new BadRequestException('Estoque insuficiente');
     }
 
-    // Verifica se o item já existe no carrinho
     const existingItem = await this.cartRepository.findCartItem(
       userId,
       produtoId,
@@ -34,17 +44,14 @@ export class CartService {
     );
 
     if (existingItem) {
-      // Atualiza quantidade se já existir
       const novaQuantidade = existingItem.quantidade + quantidade;
       if (produto.estoque < novaQuantidade) {
         throw new BadRequestException('Estoque insuficiente');
       }
       await this.cartRepository.updateQuantidade(existingItem.id, novaQuantidade);
-      // Retorna o carrinho completo após atualizar
       return this.getCart(userId);
     }
 
-    // Adiciona novo item
     await this.cartRepository.addItem({
       userId,
       produtoId,
@@ -53,7 +60,6 @@ export class CartService {
       cor,
     });
     
-    // Retorna o carrinho completo
     return this.getCart(userId);
   }
 
@@ -66,42 +72,51 @@ export class CartService {
 
     const itemCount = cartItems.reduce((sum, item) => sum + item.quantidade, 0);
 
-    // 🔥 Retorna os items formatados como array (igual ao frontend espera)
-    const formattedItems = cartItems.map(item => ({
-      id: item.id,
-      quantidade: item.quantidade,
-      tamanho: item.tamanho,
-      cor: item.cor,
-      produto: {
-        id: item.produto.id,
-        nome: item.produto.nome,
-        preco: Number(item.produto.preco),
-        imagem: item.produto.imagem,
-        categoria: item.produto.categoria,
-      }
-    }));
+    const formattedItems = cartItems.map(item => {
+      const imagemPrincipal = item.produto.imagens?.find(img => img.isPrincipal) 
+                            || item.produto.imagens?.[0];
+      
+      return {
+        id: item.id,
+        quantidade: item.quantidade,
+        tamanho: item.tamanho,
+        cor: item.cor,
+        produto: {
+          id: item.produto.id,
+          nome: item.produto.nome,
+          preco: Number(item.produto.preco),
+          slug: item.produto.slug,
+          categoria: item.produto.categoria,
+          imagem: imagemPrincipal?.url || null,
+          imagens: item.produto.imagens?.map(img => ({
+            id: img.id,
+            url: img.url,
+            isPrincipal: img.isPrincipal,
+            ordem: img.ordem
+          })) || [],
+        }
+      };
+    });
 
-    // 🔥 Se o frontend espera array diretamente, retorne o array
-    // Se espera objeto com items, descomente a linha abaixo e comente a outra
-    return formattedItems; // ← Retorna array diretamente (Recomendado)
-    // return { items: formattedItems, total, itemCount }; ← Alternativa
+    return {
+      items: formattedItems,
+      total: Number(total.toFixed(2)),
+      itemCount
+    };
   }
 
   async updateCartItem(userId: string, itemId: string, updateDto: UpdateCartItemDto) {
     const { quantidade } = updateDto;
 
-    // Busca o item do carrinho
     const cartItem = await this.cartRepository.findByIdAndUser(itemId, userId);
     if (!cartItem) {
       throw new NotFoundException('Item do carrinho não encontrado');
     }
 
     if (quantidade <= 0) {
-      await this.removeFromCart(userId, itemId);
-      return this.getCart(userId);
+      return this.removeFromCart(userId, itemId);
     }
 
-    // Verifica estoque
     if (cartItem.produto.estoque < quantidade) {
       throw new BadRequestException('Estoque insuficiente');
     }
@@ -117,17 +132,81 @@ export class CartService {
     }
 
     await this.cartRepository.removeItem(itemId);
-    return this.getCart(userId); // ← Retorna carrinho atualizado
+    return this.getCart(userId);
   }
 
   async clearCart(userId: string) {
     await this.cartRepository.clearCart(userId);
-    return this.getCart(userId); // ← Retorna carrinho vazio
+    return this.getCart(userId);
   }
 
   async getCartItemCount(userId: string) {
     const cartItems = await this.cartRepository.findCartByUser(userId);
     const itemCount = cartItems.reduce((sum, item) => sum + item.quantidade, 0);
     return { count: itemCount };
+  }
+
+  // Método auxiliar para validar itens do carrinho antes do checkout
+  async validateCartItems(userId: string) {
+    const cartItems = await this.cartRepository.findCartByUser(userId);
+    
+    const validationResults: ValidationResult[] = []; // Tipado corretamente
+    let isValid = true;
+
+    for (const item of cartItems) {
+      const produto = await this.produtoRepository.findById(item.produtoId);
+      
+      if (!produto) {
+        validationResults.push({
+          itemId: item.id,
+          produtoId: item.produtoId,
+          nome: 'Produto não encontrado',
+          available: false,
+          reason: 'Produto não existe mais'
+        });
+        isValid = false;
+        continue;
+      }
+
+      if (produto.estoque < item.quantidade) {
+        validationResults.push({
+          itemId: item.id,
+          produtoId: item.produtoId,
+          nome: produto.nome,
+          available: false,
+          reason: `Estoque insuficiente. Disponível: ${produto.estoque}`,
+          requestedQuantity: item.quantidade,
+          availableQuantity: produto.estoque
+        });
+        isValid = false;
+      } else {
+        validationResults.push({
+          itemId: item.id,
+          produtoId: item.produtoId,
+          nome: produto.nome,
+          available: true,
+          price: Number(produto.preco)
+        });
+      }
+    }
+
+    return {
+      isValid,
+      items: validationResults,
+      totalItems: cartItems.length
+    };
+  }
+
+  // Método para sincronizar estoque após checkout
+  async syncStockAfterCheckout(userId: string, itemsToRemove: string[]) {
+    const cartItems = await this.cartRepository.findCartByUser(userId);
+    
+    for (const item of cartItems) {
+      if (itemsToRemove.includes(item.id)) {
+        await this.cartRepository.removeItem(item.id);
+      }
+    }
+    
+    return this.getCart(userId);
   }
 }
