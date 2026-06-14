@@ -1,4 +1,25 @@
-// src/main.ts
+// ⚠️ IMPORTANTE: Handler de unhandledRejection deve ser a PRIMEIRA coisa
+process.on('unhandledRejection', (reason: any) => {
+  // Captura erros específicos do Redis e impede crash
+  if (reason?.code === 'ECONNRESET' || 
+      reason?.code === 'ECONNREFUSED' || 
+      reason?.message?.includes('ECONNRESET') ||
+      reason?.message?.includes('ECONNREFUSED')) {
+    console.warn(`⚠️ Redis connection error suppressed: ${reason.code || reason.message}`);
+    return;
+  }
+  
+  // Log de outros erros não tratados
+  console.error('❌ Unhandled rejection:', reason);
+  
+  // Opcional: logging em arquivo para debug
+  if (process.env.NODE_ENV === 'production') {
+    const fs = require('fs');
+    const errorLog = `[${new Date().toISOString()}] ${reason?.stack || reason}\n`;
+    fs.appendFileSync('unhandled-rejection.log', errorLog);
+  }
+});
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -42,7 +63,6 @@ function loadEnvironment() {
     dotenv.config({ path: defaultEnvPath });
     console.log(`⚠️ ${envFile} não encontrado, usando .env padrão`);
   } else {
-    // Tenta carregar .env diretamente
     dotenv.config();
     console.log(`📝 Usando variáveis de ambiente do sistema`);
   }
@@ -69,7 +89,7 @@ async function configureApp(app: any) {
     }),
   );
 
-  // CORS configurado - ADICIONADO MAIS ORIGENS
+  // CORS configurado
   if (isProduction) {
     const corsOrigin = process.env.CORS_ORIGIN || 'https://laboure.vercel.app';
     app.enableCors({
@@ -93,7 +113,7 @@ async function configureApp(app: any) {
         'http://127.0.0.1:5174',
         'http://127.0.0.1:3000',
         'http://127.0.0.1:3001',
-        'https://aetxtjypdzwkniuvluwr.supabase.co', // Adicionado Supabase
+        'https://aetxtjypdzwkniuvluwr.supabase.co',
       ],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -137,10 +157,6 @@ async function configureApp(app: any) {
         - Upload via Supabase Storage
         - Formatos: JPEG, PNG, WEBP
         - Tamanho máximo: 5MB por imagem
-        
-        ### Ambientes:
-        - 🔧 **Atual:** DESENVOLVIMENTO
-        - 🚀 **Produção:** Disponível sem Swagger
       `)
       .setVersion('1.0')
       .addBearerAuth({
@@ -188,12 +204,16 @@ async function checkBullHealth() {
   try {
     const Redis = require('ioredis');
     const redisPort = process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT) : 6379;
+    const isProduction = process.env.NODE_ENV === 'production';
+    
     const redis = new Redis({
       host: process.env.REDIS_HOST || 'localhost',
       port: redisPort,
       password: process.env.REDIS_PASSWORD,
+      tls: isProduction ? { rejectUnauthorized: false } : undefined,
       retryStrategy: () => null,
       lazyConnect: true,
+      connectTimeout: 5000,
     });
     
     await redis.connect();
@@ -204,10 +224,15 @@ async function checkBullHealth() {
       await redis.quit();
       return true;
     }
-  } catch (error) {
-    logger.error(`❌ Redis/Bull não disponível: ${error.message}`);
+  } catch (error: any) {
+    if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
+      logger.warn(`⚠️ Redis não disponível: ${error.code}`);
+    } else {
+      logger.error(`❌ Redis/Bull health check falhou: ${error.message}`);
+    }
     return false;
   }
+  return false;
 }
 
 // Health check para Supabase
@@ -224,7 +249,7 @@ async function checkSupabaseHealth() {
     
     logger.log('✅ Supabase configurado');
     return true;
-  } catch (error) {
+  } catch (error: any) {
     logger.error(`❌ Supabase health check falhou: ${error.message}`);
     return false;
   }
@@ -329,7 +354,7 @@ async function bootstrapLocal() {
       } else {
         logger.warn('⚠️ Nenhuma fila encontrada para o dashboard');
       }
-    } catch (error) {
+    } catch (error: any) {
       logger.warn(`⚠️ Não foi possível carregar Bull Dashboard: ${error.message}`);
     }
   }

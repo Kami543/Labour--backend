@@ -1,4 +1,3 @@
-// src/app/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
@@ -38,11 +37,23 @@ import appConfig from '../config/app.config';
       },
     ]),
 
-    // CONFIGURAÇÃO CORRIGIDA DO BULL COM LAZY CONNECT
+    // 🔧 CONFIGURAÇÃO CORRIGIDA DO BULL COM TLS E HANDLER DE ERROS
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
         const isDevelopment = process.env.NODE_ENV === 'development';
+        const isProduction = process.env.NODE_ENV === 'production';
+        
+        // Log de configuração (apenas para debug)
+        if (process.env.DEBUG_REDIS === 'true') {
+          console.log('[BullModule] Configurando Redis:', {
+            host: configService.get<string>('redis.host', 'localhost'),
+            port: configService.get<number>('redis.port', 6379),
+            env: process.env.NODE_ENV,
+            hasPassword: !!configService.get<string>('redis.password'),
+            useTLS: isProduction,
+          });
+        }
         
         return {
           redis: {
@@ -52,34 +63,69 @@ import appConfig from '../config/app.config';
             db: configService.get<number>('redis.db', 0),
             keyPrefix: configService.get<string>('redis.prefix', 'laboure:'),
             
-            // 🔧 FIX CRÍTICO: Impede conexões no boot
+            // 🔧 TLS para produção (Upstash, Redis Cloud, etc.)
+            tls: isProduction ? {
+              servername: configService.get<string>('redis.host'),
+              rejectUnauthorized: false, // Apenas se necessário com certificados auto-assinados
+            } : undefined,
+            
+            // 🔧 CRÍTICO: Impede conexões no boot e evita ECONNRESET
             lazyConnect: true,              // Não conecta na inicialização
             enableOfflineQueue: false,      // Não acumula comandos sem conexão
+            maxRetriesPerRequest: null,     // Previne tentativas infinitas que causam crash
             
-            // Estratégia de retry otimizada por ambiente
+            // 🔧 Estratégia de retry otimizada para evitar ECONNRESET
             retryStrategy: (times: number) => {
-              // Em desenvolvimento: desiste rápido se Redis não estiver rodando
-              if (isDevelopment && times > 3) {
-                console.log(`⚠️ Redis não disponível em desenvolvimento - desistindo após ${times} tentativas`);
-                return null; // Para de tentar
-              }
+              // Limite de tentativas baseado no ambiente
+              const maxRetries = isDevelopment ? 3 : 5;
               
-              // Em produção: mais resiliente
-              if (!isDevelopment && times > 10) {
-                console.error(`❌ Redis: máximo de tentativas atingido (${times})`);
-                return null;
+              if (times > maxRetries) {
+                console.error(`❌ Redis: desistindo de reconectar após ${times} tentativas`);
+                return null; // Para de tentar - emite erro controlado ao invés de crash
               }
               
               // Delay progressivo: mais agressivo em dev, mais conservador em prod
-              const baseDelay = isDevelopment ? 100 : 200;
-              const delay = Math.min(times * baseDelay, isDevelopment ? 1000 : 5000);
+              const baseDelay = isDevelopment ? 200 : 500;
+              const maxDelay = isDevelopment ? 2000 : 10000;
+              let delay = times * baseDelay;
+              
+              // Aplica jitter para evitar thundering herd
+              delay = delay + Math.random() * 100;
+              delay = Math.min(delay, maxDelay);
               
               if (isDevelopment) {
-                console.log(`🔄 Redis: tentativa ${times} de reconexão em ${delay}ms`);
+                console.log(`🔄 Redis: tentativa ${times}/${maxRetries} de reconexão em ${Math.round(delay)}ms`);
+              } else if (times > 2) {
+                console.warn(`⚠️ Redis: tentativa ${times}/${maxRetries} de reconexão em ${Math.round(delay)}ms`);
               }
               
               return delay;
             },
+            
+            // 🔧 Timeouts para evitar conexões pendentes
+            connectTimeout: isDevelopment ? 5000 : 10000,
+            commandTimeout: isDevelopment ? 3000 : 5000,
+            keepAlive: 30000,
+            
+            // 🔧 Reconexão automática para erros específicos
+            reconnectOnError: (err: Error) => {
+              const targetErrors = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'READONLY'];
+              const shouldReconnect = targetErrors.some(code => err.message.includes(code));
+              
+              if (shouldReconnect) {
+                console.warn(`🔄 Redis: ${err.message} - tentando reconectar automaticamente`);
+                return true; // Tenta reconectar
+              }
+              
+              // Erros críticos não tentam reconexão
+              console.error(`❌ Redis: erro crítico - ${err.message}`);
+              return false;
+            },
+            
+            // 🔧 Configurações adicionais para estabilidade
+            autoResubscribe: true,
+            autoResendUnfulfilledCommands: false,
+            showFriendlyErrorStack: isDevelopment,
           },
           
           // Configurações padrão dos jobs
@@ -89,9 +135,9 @@ import appConfig from '../config/app.config';
               type: 'exponential',
               delay: 1000,
             },
-            removeOnComplete: 100,
-            removeOnFail: 200,
-            timeout: 30000,
+            removeOnComplete: isDevelopment ? 50 : 100,
+            removeOnFail: isDevelopment ? 50 : 200,
+            timeout: isDevelopment ? 15000 : 30000,
             stackTraceLimit: 10,
           },
           
@@ -108,7 +154,7 @@ import appConfig from '../config/app.config';
       inject: [ConfigService],
     }),
 
-    // REGISTRO DAS 6 FILAS
+    // 📋 REGISTRO DAS 6 FILAS COM CONFIGURAÇÕES OTIMIZADAS
     BullModule.registerQueue(
       {
         name: 'payment',
@@ -159,6 +205,8 @@ import appConfig from '../config/app.config';
           attempts: 3,
           backoff: { type: 'exponential', delay: 5000 },
           timeout: 20000,
+          removeOnComplete: 50,
+          removeOnFail: 100,
         },
       },
       {
@@ -168,6 +216,8 @@ import appConfig from '../config/app.config';
           attempts: 3,
           backoff: { type: 'exponential', delay: 3000 },
           timeout: 10000,
+          removeOnComplete: 50,
+          removeOnFail: 100,
         },
       },
     ),
