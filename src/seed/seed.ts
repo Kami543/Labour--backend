@@ -11,10 +11,11 @@ async function findOrCreateProduto(nome: string, createData: any) {
   });
   
   if (existingProduto) {
-    // Se existe, atualiza
+    // Se existe, atualiza (sem incluir imagens na atualização)
+    const { imagens, ...updateData } = createData;
     return await prisma.produto.update({
       where: { id: existingProduto.id },
-      data: createData
+      data: updateData
     });
   }
   
@@ -98,7 +99,7 @@ export async function seedDatabase() {
   console.log('✅ Usuários criados:', { user1: user1.email, user2: user2.email, admin: admin.email });
 
   // ========================================
-  // PRODUTOS
+  // PRODUTOS (CORRIGIDO - usando isPrincipal)
   // ========================================
 
   const produto1 = await findOrCreateProduto("Camiseta Masculina Básica", {
@@ -106,12 +107,21 @@ export async function seedDatabase() {
     slug: "camiseta-masculina-basica",
     descricao: "Camiseta de algodão 100% de alta qualidade, ideal para uso diário. Confortável e durável.",
     preco: 59.90,
-    imagem: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=500",
     categoria: "Masculino",
     tag: "roupa",
     estoque: 100,
     cores: ["Preto", "Branco", "Azul Marinho", "Cinza"],
     tamanhos: ["P", "M", "G", "GG", "XG"],
+    imagens: {
+      create: [
+        {
+          url: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=500",
+          altText: "Camiseta masculina básica preta",
+          ordem: 0,
+          isPrincipal: true  // ✅ CORRIGIDO: was "principal", now "isPrincipal"
+        }
+      ]
+    }
   });
 
   const produto2 = await findOrCreateProduto("Vestido Floral Feminino", {
@@ -119,12 +129,21 @@ export async function seedDatabase() {
     slug: "vestido-floral-feminino",
     descricao: "Vestido elegante com estampa floral, tecido leve e fluido. Perfeito para ocasiões especiais.",
     preco: 129.90,
-    imagem: "https://images.unsplash.com/photo-1612336307429-8a898d10e223?w=500",
     categoria: "Feminino",
     tag: "vestido",
     estoque: 50,
     cores: ["Vermelho", "Azul", "Rosa", "Amarelo"],
     tamanhos: ["P", "M", "G"],
+    imagens: {
+      create: [
+        {
+          url: "https://images.unsplash.com/photo-1612336307429-8a898d10e223?w=500",
+          altText: "Vestido floral feminino vermelho",
+          ordem: 0,
+          isPrincipal: true  // ✅ CORRIGIDO
+        }
+      ]
+    }
   });
 
   const produto3 = await findOrCreateProduto("Jaqueta Jeans Masculina", {
@@ -132,12 +151,21 @@ export async function seedDatabase() {
     slug: "jaqueta-jeans-masculina",
     descricao: "Jaqueta jeans clássica com acabamento premium. Estilo casual e versátil.",
     preco: 199.90,
-    imagem: "https://images.unsplash.com/photo-1576995853123-5a10305d93c0?w=500",
     categoria: "Masculino",
     tag: "jaqueta",
     estoque: 30,
     cores: ["Azul Claro", "Azul Escuro", "Preto"],
     tamanhos: ["P", "M", "G", "GG"],
+    imagens: {
+      create: [
+        {
+          url: "https://images.unsplash.com/photo-1576995853123-5a10305d93c0?w=500",
+          altText: "Jaqueta jeans masculina azul",
+          ordem: 0,
+          isPrincipal: true  // ✅ CORRIGIDO
+        }
+      ]
+    }
   });
 
   const produto4 = await findOrCreateProduto("Bolsa Feminina de Couro", {
@@ -145,12 +173,21 @@ export async function seedDatabase() {
     slug: "bolsa-feminina-couro",
     descricao: "Bolsa elegante em couro legítimo, com alça ajustável e muitos compartimentos.",
     preco: 299.90,
-    imagem: "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=500",
     categoria: "Acessorios",
     tag: "bolsa",
     estoque: 25,
     cores: ["Preto", "Marrom", "Bege"],
     tamanhos: ["Único"],
+    imagens: {
+      create: [
+        {
+          url: "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=500",
+          altText: "Bolsa feminina de couro preta",
+          ordem: 0,
+          isPrincipal: true  // ✅ CORRIGIDO
+        }
+      ]
+    }
   });
 
   const produto5 = await findOrCreateProduto("Tênis Esportivo", {
@@ -158,12 +195,21 @@ export async function seedDatabase() {
     slug: "tenis-esportivo",
     descricao: "Tênis confortável para corrida e atividades físicas. Com amortecimento e respirabilidade.",
     preco: 249.90,
-    imagem: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500",
     categoria: "Masculino",
     tag: "calcado",
     estoque: 80,
     cores: ["Preto/Branco", "Azul/Cinza", "Vermelho"],
     tamanhos: ["37", "38", "39", "40", "41", "42", "43"],
+    imagens: {
+      create: [
+        {
+          url: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500",
+          altText: "Tênis esportivo preto e branco",
+          ordem: 0,
+          isPrincipal: true  // ✅ CORRIGIDO
+        }
+      ]
+    }
   });
 
   const produto6 = await findOrCreateProduto("Colar de Prata 925", {
@@ -171,12 +217,21 @@ export async function seedDatabase() {
     slug: "colar-prata-925",
     descricao: "Colar delicado em prata 925 com pingente de coração. Acabamento de alta qualidade.",
     preco: 89.90,
-    imagem: "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=500",
     categoria: "Acessorios",
     tag: "joia",
     estoque: 150,
     cores: ["Prata"],
     tamanhos: ["40cm", "45cm", "50cm"],
+    imagens: {
+      create: [
+        {
+          url: "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=500",
+          altText: "Colar de prata 925 com pingente coração",
+          ordem: 0,
+          isPrincipal: true  // ✅ CORRIGIDO
+        }
+      ]
+    }
   });
 
   console.log('✅ Produtos criados:', { 
@@ -189,7 +244,7 @@ export async function seedDatabase() {
   });
 
   // ========================================
-  // ITENS DO CARRINHO (usando upsert para evitar duplicação)
+  // ITENS DO CARRINHO
   // ========================================
 
   const cartItem1 = await prisma.cartItem.upsert({
@@ -237,7 +292,7 @@ export async function seedDatabase() {
   console.log('✅ Itens do carrinho criados/atualizados');
 
   // ========================================
-  // MÉTODOS DE PAGAMENTO - CORRIGIDO USANDO ENUM
+  // MÉTODOS DE PAGAMENTO
   // ========================================
 
   const metodoPagamento1 = await prisma.metodoPagamento.upsert({
@@ -245,7 +300,7 @@ export async function seedDatabase() {
     update: {},
     create: {
       id: "metodo-pagamento-1",
-      tipo: TipoPagamento.CARTAO_CREDITO, // Corrigido: usando enum
+      tipo: TipoPagamento.CARTAO_CREDITO,
       ultimosDigitos: "1234",
       pagamentoDefault: true,
       userId: user1.id,
@@ -257,7 +312,7 @@ export async function seedDatabase() {
     update: {},
     create: {
       id: "metodo-pagamento-2",
-      tipo: TipoPagamento.CARTAO_DEBITO, // Corrigido: usando enum
+      tipo: TipoPagamento.CARTAO_DEBITO,
       ultimosDigitos: "5678",
       pagamentoDefault: false,
       userId: user1.id,
