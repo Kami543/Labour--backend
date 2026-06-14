@@ -3,10 +3,9 @@ import { PrismaClient } from '@prisma/client';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
-  private static instance: PrismaService; // Singleton pattern
+  private static instance: PrismaService;
   
   constructor() {
-    // Reutilizar instância existente se já existir
     if (PrismaService.instance) {
       return PrismaService.instance;
     }
@@ -15,11 +14,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       log: process.env.NODE_ENV === 'development' 
         ? ['query', 'info', 'warn', 'error']
         : ['error'],
-      
-      // 🔥 CONFIGURAÇÃO CRÍTICA - Aumentar pool de conexões
       datasources: {
         db: {
-          url: process.env.DATABASE_URL + '?connection_limit=20&pool_timeout=30'
+          url: process.env.DATABASE_URL,
         }
       }
     });
@@ -28,26 +25,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    if (!this.$connect) {
-      console.log('⚠️ Prisma already connected');
-      return;
-    }
-    
     await this.$connect();
     console.log('✅ Prisma connected to database');
-    
-    // Log da configuração atual
     console.log(`📊 Pool config: limit=20, timeout=30s`);
   }
 
   async onModuleDestroy() {
-    if (this.$disconnect) {
-      await this.$disconnect();
-      console.log('🔌 Prisma disconnected from database');
-    }
+    await this.$disconnect();
+    console.log('🔌 Prisma disconnected from database');
   }
 
-  // Método utilitário para limpar o banco (útil para testes)
   async cleanDatabase() {
     if (process.env.NODE_ENV === 'production') {
       throw new Error('cleanDatabase cannot be called in production');
