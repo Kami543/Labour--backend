@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { ConfigService } from '@nestjs/config';
-import * as ws from 'ws';
+import ws from 'ws';
 
 @Injectable()
 export class SupabaseService implements OnModuleInit {
@@ -25,7 +25,7 @@ export class SupabaseService implements OnModuleInit {
         persistSession: false,
       },
       realtime: {
-        transport: ws,
+        transport: ws as any,
       },
     });
 
