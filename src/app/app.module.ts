@@ -37,23 +37,12 @@ import appConfig from '../config/app.config';
       },
     ]),
 
-    // 🔧 CONFIGURAÇÃO CORRIGIDA DO BULL COM TLS E HANDLER DE ERROS
+    // 🔧 CONFIGURAÇÃO CORRIGIDA COM enableOfflineQueue: true
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
         const isDevelopment = process.env.NODE_ENV === 'development';
         const isProduction = process.env.NODE_ENV === 'production';
-        
-        // Log de configuração (apenas para debug)
-        if (process.env.DEBUG_REDIS === 'true') {
-          console.log('[BullModule] Configurando Redis:', {
-            host: configService.get<string>('redis.host', 'localhost'),
-            port: configService.get<number>('redis.port', 6379),
-            env: process.env.NODE_ENV,
-            hasPassword: !!configService.get<string>('redis.password'),
-            useTLS: isProduction,
-          });
-        }
         
         return {
           redis: {
@@ -64,68 +53,47 @@ import appConfig from '../config/app.config';
             keyPrefix: configService.get<string>('redis.prefix', 'laboure:'),
             
             // 🔧 TLS para produção (Upstash, Redis Cloud, etc.)
-            tls: isProduction ? {
-              servername: configService.get<string>('redis.host'),
-              rejectUnauthorized: false, // Apenas se necessário com certificados auto-assinados
-            } : undefined,
+            tls: isProduction ? {} : undefined,
             
-            // 🔧 CRÍTICO: Impede conexões no boot e evita ECONNRESET
-            lazyConnect: true,              // Não conecta na inicialização
-            enableOfflineQueue: false,      // Não acumula comandos sem conexão
-            maxRetriesPerRequest: null,     // Previne tentativas infinitas que causam crash
+            // 🔧 CRÍTICO: enableOfflineQueue deve ser true para Bull funcionar
+            // Quando false, comandos enviados antes da conexão são rejeitados
+            enableOfflineQueue: true,  // ← MUDADO PARA TRUE
             
-            // 🔧 Estratégia de retry otimizada para evitar ECONNRESET
+            // 🔧 Estratégia de retry para reconexão
             retryStrategy: (times: number) => {
-              // Limite de tentativas baseado no ambiente
               const maxRetries = isDevelopment ? 3 : 5;
               
               if (times > maxRetries) {
                 console.error(`❌ Redis: desistindo de reconectar após ${times} tentativas`);
-                return null; // Para de tentar - emite erro controlado ao invés de crash
+                return null;
               }
               
-              // Delay progressivo: mais agressivo em dev, mais conservador em prod
-              const baseDelay = isDevelopment ? 200 : 500;
-              const maxDelay = isDevelopment ? 2000 : 10000;
-              let delay = times * baseDelay;
+              const delay = Math.min(times * 200, 5000);
               
-              // Aplica jitter para evitar thundering herd
-              delay = delay + Math.random() * 100;
-              delay = Math.min(delay, maxDelay);
-              
-              if (isDevelopment) {
-                console.log(`🔄 Redis: tentativa ${times}/${maxRetries} de reconexão em ${Math.round(delay)}ms`);
-              } else if (times > 2) {
-                console.warn(`⚠️ Redis: tentativa ${times}/${maxRetries} de reconexão em ${Math.round(delay)}ms`);
+              if (isDevelopment && times > 1) {
+                console.log(`🔄 Redis: tentativa ${times} de reconexão em ${delay}ms`);
               }
               
               return delay;
             },
             
-            // 🔧 Timeouts para evitar conexões pendentes
-            connectTimeout: isDevelopment ? 5000 : 10000,
-            commandTimeout: isDevelopment ? 3000 : 5000,
+            // Timeouts para evitar conexões pendentes
+            connectTimeout: 10000,
+            commandTimeout: 5000,
             keepAlive: 30000,
             
-            // 🔧 Reconexão automática para erros específicos
+            // Reconexão automática para erros específicos
             reconnectOnError: (err: Error) => {
-              const targetErrors = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'READONLY'];
+              const targetErrors = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT'];
               const shouldReconnect = targetErrors.some(code => err.message.includes(code));
               
               if (shouldReconnect) {
-                console.warn(`🔄 Redis: ${err.message} - tentando reconectar automaticamente`);
-                return true; // Tenta reconectar
+                console.warn(`🔄 Redis: ${err.message} - tentando reconectar`);
+                return true;
               }
               
-              // Erros críticos não tentam reconexão
-              console.error(`❌ Redis: erro crítico - ${err.message}`);
               return false;
             },
-            
-            // 🔧 Configurações adicionais para estabilidade
-            autoResubscribe: true,
-            autoResendUnfulfilledCommands: false,
-            showFriendlyErrorStack: isDevelopment,
           },
           
           // Configurações padrão dos jobs
@@ -135,9 +103,9 @@ import appConfig from '../config/app.config';
               type: 'exponential',
               delay: 1000,
             },
-            removeOnComplete: isDevelopment ? 50 : 100,
-            removeOnFail: isDevelopment ? 50 : 200,
-            timeout: isDevelopment ? 15000 : 30000,
+            removeOnComplete: 100,
+            removeOnFail: 200,
+            timeout: 30000,
             stackTraceLimit: 10,
           },
           
@@ -154,7 +122,7 @@ import appConfig from '../config/app.config';
       inject: [ConfigService],
     }),
 
-    // 📋 REGISTRO DAS 6 FILAS COM CONFIGURAÇÕES OTIMIZADAS
+    // 📋 REGISTRO DAS 6 FILAS
     BullModule.registerQueue(
       {
         name: 'payment',

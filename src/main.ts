@@ -1,23 +1,11 @@
 // ⚠️ IMPORTANTE: Handler de unhandledRejection deve ser a PRIMEIRA coisa
 process.on('unhandledRejection', (reason: any) => {
-  // Captura erros específicos do Redis e impede crash
-  if (reason?.code === 'ECONNRESET' || 
-      reason?.code === 'ECONNREFUSED' || 
-      reason?.message?.includes('ECONNRESET') ||
-      reason?.message?.includes('ECONNREFUSED')) {
-    console.warn(`⚠️ Redis connection error suppressed: ${reason.code || reason.message}`);
-    return;
-  }
+  // Ignora erros específicos do Bull/Redis
+  if (reason?.message?.includes('enableOfflineQueue')) return;
+  if (reason?.code === 'ECONNRESET' || reason?.code === 'ECONNREFUSED') return;
   
-  // Log de outros erros não tratados
+  // Apenas log no console - SEM fs.appendFileSync para não crashar
   console.error('❌ Unhandled rejection:', reason);
-  
-  // Opcional: logging em arquivo para debug
-  if (process.env.NODE_ENV === 'production') {
-    const fs = require('fs');
-    const errorLog = `[${new Date().toISOString()}] ${reason?.stack || reason}\n`;
-    fs.appendFileSync('unhandled-rejection.log', errorLog);
-  }
 });
 
 import { NestFactory } from '@nestjs/core';
