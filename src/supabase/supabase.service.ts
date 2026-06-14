@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { ConfigService } from '@nestjs/config';
+import * as ws from 'ws';
 
 @Injectable()
 export class SupabaseService implements OnModuleInit {
@@ -12,19 +13,23 @@ export class SupabaseService implements OnModuleInit {
   onModuleInit() {
     const supabaseUrl = this.configService.get<string>('SUPABASE_URL');
     const supabaseKey = this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY');
-    
+
     if (!supabaseUrl || !supabaseKey) {
-      throw new Error('Supabase credentials not found in environment variables');
+      this.logger.warn('⚠️ Supabase não configurado - upload de imagens desabilitado');
+      return;
     }
 
     this.supabase = createClient(supabaseUrl, supabaseKey, {
       auth: {
         autoRefreshToken: false,
-        persistSession: false
-      }
+        persistSession: false,
+      },
+      realtime: {
+        transport: ws,
+      },
     });
-    
-    this.logger.log('Supabase client initialized');
+
+    this.logger.log('✅ Supabase client initialized');
   }
 
   getClient(): SupabaseClient {
