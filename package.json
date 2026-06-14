@@ -27,8 +27,9 @@
     "seed": "ts-node src/seed/seed.ts"
   },
   "dependencies": {
-    "@bull-board/api": "^7.1.5",
-    "@bull-board/express": "^7.1.5",
+    "@bull-board/api": "^7.2.1",
+    "@bull-board/express": "^7.2.1",
+    "@bull-board/nestjs": "^7.2.1",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/bull": "^11.0.4",
     "@nestjs/bullmq": "^11.0.4",

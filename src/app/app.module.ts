@@ -1,7 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { BullBoardModule } from '@bull-board/nestjs';
+import { ExpressAdapter } from '@bull-board/express';
 
 import { UserModule } from '../users/users.module';
 import { ProdutoModule } from '../produto/produto.module';
@@ -20,6 +22,31 @@ import { UploadModule } from '../upload/upload.module';
 import redisConfig from '../config/redis.config';
 import appConfig from '../config/app.config';
 
+// Middleware para autenticação do Bull Board
+class BullBoardAuthMiddleware implements NestMiddleware {
+  use(req: any, res: any, next: () => void) {
+    // Configuração básica de autenticação
+    const auth = req.headers.authorization;
+    const validUser = process.env.BULL_BOARD_USER || 'admin';
+    const validPass = process.env.BULL_BOARD_PASS || 'laboure2026';
+    
+    if (!auth) {
+      res.setHeader('WWW-Authenticate', 'Basic');
+      return res.status(401).send('Authentication required');
+    }
+    
+    const base64 = auth.split(' ')[1];
+    const [user, pass] = Buffer.from(base64, 'base64').toString().split(':');
+    
+    if (user === validUser && pass === validPass) {
+      return next();
+    }
+    
+    res.setHeader('WWW-Authenticate', 'Basic');
+    res.status(401).send('Invalid credentials');
+  }
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -37,7 +64,7 @@ import appConfig from '../config/app.config';
       },
     ]),
 
-    // 🔧 CONFIGURAÇÃO CORRIGIDA COM enableOfflineQueue: true
+    // 🔧 CONFIGURAÇÃO DO REDIS COM Bull
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
@@ -52,14 +79,9 @@ import appConfig from '../config/app.config';
             db: configService.get<number>('redis.db', 0),
             keyPrefix: configService.get<string>('redis.prefix', 'laboure:'),
             
-            // 🔧 TLS para produção (Upstash, Redis Cloud, etc.)
             tls: isProduction ? {} : undefined,
+            enableOfflineQueue: true,
             
-            // 🔧 CRÍTICO: enableOfflineQueue deve ser true para Bull funcionar
-            // Quando false, comandos enviados antes da conexão são rejeitados
-            enableOfflineQueue: true,  // ← MUDADO PARA TRUE
-            
-            // 🔧 Estratégia de retry para reconexão
             retryStrategy: (times: number) => {
               const maxRetries = isDevelopment ? 3 : 5;
               
@@ -77,12 +99,10 @@ import appConfig from '../config/app.config';
               return delay;
             },
             
-            // Timeouts para evitar conexões pendentes
             connectTimeout: 10000,
             commandTimeout: 5000,
             keepAlive: 30000,
             
-            // Reconexão automática para erros específicos
             reconnectOnError: (err: Error) => {
               const targetErrors = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT'];
               const shouldReconnect = targetErrors.some(code => err.message.includes(code));
@@ -96,7 +116,6 @@ import appConfig from '../config/app.config';
             },
           },
           
-          // Configurações padrão dos jobs
           defaultJobOptions: {
             attempts: isDevelopment ? 1 : 3,
             backoff: {
@@ -109,7 +128,6 @@ import appConfig from '../config/app.config';
             stackTraceLimit: 10,
           },
           
-          // Configurações do processador
           settings: {
             lockDuration: 30000,
             stalledInterval: 30000,
@@ -190,6 +208,38 @@ import appConfig from '../config/app.config';
       },
     ),
 
+    // 📊 BULL BOARD - Monitoramento de Filas
+    BullBoardModule.forRoot({
+      route: '/admin/queues',
+      adapter: ExpressAdapter,
+    }),
+    
+    // Registrar cada fila no Bull Board
+    BullBoardModule.forFeature({
+      name: 'payment',
+      adapter: ExpressAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: 'notification',
+      adapter: ExpressAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: 'email',
+      adapter: ExpressAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: 'fraud-check',
+      adapter: ExpressAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: 'order-processing',
+      adapter: ExpressAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: 'inventory',
+      adapter: ExpressAdapter,
+    }),
+
     // MÓDULOS DA APLICAÇÃO
     PrismaModule,
     HealthModule,
@@ -206,4 +256,11 @@ import appConfig from '../config/app.config';
     UploadModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Proteger o Bull Board com autenticação básica
+    consumer
+      .apply(BullBoardAuthMiddleware)
+      .forRoutes('/admin/queues');
+  }
+}
