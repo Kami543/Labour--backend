@@ -2,8 +2,6 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { BullBoardModule } from '@bull-board/nestjs';
-import { ExpressAdapter } from '@bull-board/express';
 
 import { UserModule } from '../users/users.module';
 import { ProdutoModule } from '../produto/produto.module';
@@ -39,6 +37,7 @@ import appConfig from '../config/app.config';
       },
     ]),
 
+    // 🔧 CONFIGURAÇÃO DO REDIS COM Bull
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
@@ -52,41 +51,56 @@ import appConfig from '../config/app.config';
             password: configService.get<string>('redis.password'),
             db: configService.get<number>('redis.db', 0),
             keyPrefix: configService.get<string>('redis.prefix', 'laboure:'),
+            
             tls: isProduction ? {} : undefined,
             enableOfflineQueue: true,
+            
             retryStrategy: (times: number) => {
               const maxRetries = isDevelopment ? 3 : 5;
+              
               if (times > maxRetries) {
                 console.error(`❌ Redis: desistindo de reconectar após ${times} tentativas`);
                 return null;
               }
+              
               const delay = Math.min(times * 200, 5000);
+              
               if (isDevelopment && times > 1) {
                 console.log(`🔄 Redis: tentativa ${times} de reconexão em ${delay}ms`);
               }
+              
               return delay;
             },
+            
             connectTimeout: 10000,
             commandTimeout: 5000,
             keepAlive: 30000,
+            
             reconnectOnError: (err: Error) => {
               const targetErrors = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT'];
               const shouldReconnect = targetErrors.some(code => err.message.includes(code));
+              
               if (shouldReconnect) {
                 console.warn(`🔄 Redis: ${err.message} - tentando reconectar`);
                 return true;
               }
+              
               return false;
             },
           },
+          
           defaultJobOptions: {
             attempts: isDevelopment ? 1 : 3,
-            backoff: { type: 'exponential', delay: 1000 },
+            backoff: {
+              type: 'exponential',
+              delay: 1000,
+            },
             removeOnComplete: 100,
             removeOnFail: 200,
             timeout: 30000,
             stackTraceLimit: 10,
           },
+          
           settings: {
             lockDuration: 30000,
             stalledInterval: 30000,
@@ -99,30 +113,75 @@ import appConfig from '../config/app.config';
       inject: [ConfigService],
     }),
 
+    // 📋 REGISTRO DAS 6 FILAS
     BullModule.registerQueue(
-      { name: 'payment', defaultJobOptions: { priority: 1, attempts: 5, backoff: { type: 'exponential', delay: 5000 }, timeout: 30000, removeOnComplete: 50, removeOnFail: 100 } },
-      { name: 'notification', defaultJobOptions: { attempts: 3, backoff: { type: 'fixed', delay: 2000 }, timeout: 10000, removeOnComplete: 100, removeOnFail: 100 } },
-      { name: 'email', defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 10000 }, timeout: 15000, removeOnComplete: true, removeOnFail: false } },
-      { name: 'fraud-check', defaultJobOptions: { priority: 2, attempts: 2, backoff: { type: 'fixed', delay: 3000 }, timeout: 15000, removeOnComplete: 50, removeOnFail: 50 } },
-      { name: 'order-processing', defaultJobOptions: { priority: 1, attempts: 3, backoff: { type: 'exponential', delay: 5000 }, timeout: 20000, removeOnComplete: 50, removeOnFail: 100 } },
-      { name: 'inventory', defaultJobOptions: { priority: 2, attempts: 3, backoff: { type: 'exponential', delay: 3000 }, timeout: 10000, removeOnComplete: 50, removeOnFail: 100 } },
+      {
+        name: 'payment',
+        defaultJobOptions: {
+          priority: 1,
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 5000 },
+          timeout: 30000,
+          removeOnComplete: 50,
+          removeOnFail: 100,
+        },
+      },
+      {
+        name: 'notification',
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: { type: 'fixed', delay: 2000 },
+          timeout: 10000,
+          removeOnComplete: 100,
+          removeOnFail: 100,
+        },
+      },
+      {
+        name: 'email',
+        defaultJobOptions: {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 10000 },
+          timeout: 15000,
+          removeOnComplete: true,
+          removeOnFail: false,
+        },
+      },
+      {
+        name: 'fraud-check',
+        defaultJobOptions: {
+          priority: 2,
+          attempts: 2,
+          backoff: { type: 'fixed', delay: 3000 },
+          timeout: 15000,
+          removeOnComplete: 50,
+          removeOnFail: 50,
+        },
+      },
+      {
+        name: 'order-processing',
+        defaultJobOptions: {
+          priority: 1,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5000 },
+          timeout: 20000,
+          removeOnComplete: 50,
+          removeOnFail: 100,
+        },
+      },
+      {
+        name: 'inventory',
+        defaultJobOptions: {
+          priority: 2,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 3000 },
+          timeout: 10000,
+          removeOnComplete: 50,
+          removeOnFail: 100,
+        },
+      },
     ),
 
-    // Bull Board para versão 7.x
-    BullBoardModule.forRoot({
-      route: '/admin/queues',
-      adapter: ExpressAdapter,
-    }),
-    
-    BullBoardModule.forFeature(
-      { name: 'payment', adapter: ExpressAdapter },
-      { name: 'notification', adapter: ExpressAdapter },
-      { name: 'email', adapter: ExpressAdapter },
-      { name: 'fraud-check', adapter: ExpressAdapter },
-      { name: 'order-processing', adapter: ExpressAdapter },
-      { name: 'inventory', adapter: ExpressAdapter },
-    ),
-
+    // MÓDULOS DA APLICAÇÃO
     PrismaModule,
     HealthModule,
     QueueModule,
