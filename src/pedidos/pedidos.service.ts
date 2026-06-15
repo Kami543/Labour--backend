@@ -1,5 +1,5 @@
-// src/pedidos/pedidos.service.ts
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+// src/pedidos/pedidos.service.ts - VERSÃO CORRIGIDA
+import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { PedidoRepository } from './pedido.repository';
 import { CartRepository } from '../cart/cart.repository';
 import { ProdutoRepository } from '../produto/produto.repository';
@@ -19,6 +19,8 @@ interface PedidoItemInput {
 
 @Injectable()
 export class PedidosService {
+  private readonly logger = new Logger(PedidosService.name);
+
   constructor(
     private pedidoRepository: PedidoRepository,
     private cartRepository: CartRepository,
@@ -28,15 +30,31 @@ export class PedidosService {
   ) {}
 
   async create(userId: string, createPedidoDto: CreatePedidoDto) {
+    this.logger.log(`Criando pedido para usuário: ${userId}`);
+    
+    // ✅ VALIDA ID
+    if (!userId) {
+      throw new BadRequestException('ID do usuário é obrigatório');
+    }
+    
     const user = await this.userRepository.findById(userId);
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado');
+    }
+    
     const { itens, enderecoEntrega, frete = 0, imposto = 0, observacoes } = createPedidoDto;
     
     let cartItems: any[] = [];
     let subtotal = 0;
     const pedidoItens: PedidoItemInput[] = [];
 
+    // ✅ PROCESSAMENTO COM LIMITES
     if (itens && itens.length > 0) {
-      console.log(`📦 Criando pedido com ${itens.length} itens diretos`);
+      if (itens.length > 50) {
+        throw new BadRequestException('Máximo de 50 itens por pedido');
+      }
+      
+      this.logger.log(`📦 Criando pedido com ${itens.length} itens diretos`);
       
       for (const item of itens) {
         const produto = await this.produtoRepository.findById(item.produtoId);
@@ -64,11 +82,15 @@ export class PedidosService {
       }
       
     } else {
-      console.log('🛒 Criando pedido a partir do carrinho');
+      this.logger.log('🛒 Criando pedido a partir do carrinho');
       cartItems = await this.cartRepository.findCartByUser(userId);
       
       if (!cartItems || cartItems.length === 0) {
         throw new BadRequestException('Carrinho vazio.');
+      }
+      
+      if (cartItems.length > 50) {
+        throw new BadRequestException('Carrinho com muitos itens. Limite de 50.');
       }
       
       for (const item of cartItems) {
@@ -93,6 +115,7 @@ export class PedidosService {
     
     const total = subtotal + Number(frete) + Number(imposto);
     
+    // ✅ ENDEREÇO COM VALIDAÇÃO
     let enderecoFinal: Record<string, any> = {};
     
     if (enderecoEntrega && typeof enderecoEntrega === 'object' && Object.keys(enderecoEntrega).length > 0) {
@@ -110,6 +133,7 @@ export class PedidosService {
       };
     }
     
+    // ✅ CRIA PEDIDO
     const pedido = await this.pedidoRepository.createPedido({
       userId,
       subtotal,
@@ -121,6 +145,7 @@ export class PedidosService {
       status: StatusPedido.pendente,
     });
     
+    // ✅ CRIA ITENS DO PEDIDO EM LOTE
     for (const item of pedidoItens) {
       await this.pedidoRepository.createPedidoItem({
         pedidoId: pedido.id,
@@ -132,30 +157,52 @@ export class PedidosService {
       });
     }
     
+    // ✅ LIMPA CARRINHO
     if (cartItems.length > 0) {
       await this.cartRepository.clearCart(userId);
     }
     
-    await this.notificacoesService.create(userId, {
+    // ✅ NOTIFICAÇÕES ASSÍNCRONAS
+    this.notificacoesService.create(userId, {
       tipo: 'sistema',
       titulo: '✅ Pedido criado!',
       mensagem: `Pedido #${pedido.numero} criado no valor de ${this.formatCurrency(total)}.`,
-    });
+    }).catch(err => this.logger.error(`Erro notificação: ${err.message}`));
     
-    await this.notifyAdminsNewOrder(pedido, user, pedidoItens.length);
+    this.notifyAdminsNewOrder(pedido, user, pedidoItens.length).catch(err => 
+      this.logger.error(`Erro notificar admins: ${err.message}`)
+    );
     
     return await this.pedidoRepository.findByIdAndUser(pedido.id, userId);
   }
 
   async findByUser(userId: string, page = 1, limit = 10) {
+    if (!userId) {
+      throw new BadRequestException('ID do usuário é obrigatório');
+    }
+    
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 50);
+    
     const [data, total] = await Promise.all([
-      this.pedidoRepository.findByUser(userId, page, limit),
+      this.pedidoRepository.findByUser(userId, safePage, safeLimit),
       this.pedidoRepository.countByUser(userId),
     ]);
-    return { data, total, page, limit };
+    
+    return { 
+      data, 
+      total, 
+      page: safePage, 
+      limit: safeLimit,
+      totalPages: Math.ceil(total / safeLimit)
+    };
   }
 
   async findOne(id: string, userId: string) {
+    if (!id || !userId) {
+      throw new BadRequestException('ID do pedido e usuário são obrigatórios');
+    }
+    
     const pedido = await this.pedidoRepository.findByIdAndUser(id, userId);
     if (!pedido) {
       throw new NotFoundException('Pedido não encontrado');
@@ -164,13 +211,18 @@ export class PedidosService {
   }
 
   async cancel(id: string, userId: string) {
+    if (!id || !userId) {
+      throw new BadRequestException('ID do pedido e usuário são obrigatórios');
+    }
+    
     const pedido = await this.findOne(id, userId);
 
     if (pedido.status !== StatusPedido.pendente) {
       throw new BadRequestException('Só é possível cancelar pedidos pendentes');
     }
 
-    for (const item of pedido.itens) {
+    // ✅ RESTAURA ESTOQUE
+    for (const item of pedido.itens || []) {
       await this.produtoRepository.incrementEstoque(item.produtoId, item.quantidade);
     }
 
@@ -185,23 +237,44 @@ export class PedidosService {
     return canceledPedido;
   }
 
+  // ✅ MÉTODO CORRIGIDO: findAllAdmin com paginação
   async findAllAdmin(page = 1, limit = 10, status?: string) {
-    const skip = (page - 1) * limit;
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+    const skip = (safePage - 1) * safeLimit;
+    
     const where = status ? { status: status as StatusPedido } : {};
     
     const [data, total] = await Promise.all([
-      this.pedidoRepository.findAllWithFilters(where, skip, limit),
+      this.pedidoRepository.findAllWithFilters(where, skip, safeLimit),
       this.pedidoRepository.countAllWithFilters(where),
     ]);
 
-    return { data, total, page, limit };
+    return { 
+      data, 
+      total, 
+      page: safePage, 
+      limit: safeLimit,
+      totalPages: Math.ceil(total / safeLimit)
+    };
   }
 
-  async findByStatus(status: string) {
-    return this.pedidoRepository.findByStatus(status as StatusPedido);
+  async findByStatus(status: string, page = 1, limit = 20) {
+    if (!status) {
+      throw new BadRequestException('Status é obrigatório');
+    }
+    
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+    
+    return this.pedidoRepository.findByStatus(status as StatusPedido, safePage, safeLimit);
   }
 
   async findOneAdmin(id: string) {
+    if (!id) {
+      throw new BadRequestException('ID do pedido é obrigatório');
+    }
+    
     const pedido = await this.pedidoRepository.findById(id);
     if (!pedido) {
       throw new NotFoundException('Pedido não encontrado');
@@ -210,6 +283,10 @@ export class PedidosService {
   }
 
   async updateStatusAdmin(id: string, updateStatusDto: UpdatePedidoStatusDto, adminId: string) {
+    if (!id || !adminId) {
+      throw new BadRequestException('ID do pedido e admin são obrigatórios');
+    }
+    
     const pedido = await this.pedidoRepository.findById(id);
     
     if (!pedido) {
@@ -242,12 +319,19 @@ export class PedidosService {
       codigoRastreio
     );
 
-    await this.notifyUserStatusUpdate(pedido, statusAntigo, statusNovo, codigoRastreio);
+    // ✅ NOTIFICAÇÃO ASSÍNCRONA
+    this.notifyUserStatusUpdate(pedido, statusAntigo, statusNovo, codigoRastreio).catch(err =>
+      this.logger.error(`Erro notificar usuário: ${err.message}`)
+    );
 
     return updatedPedido;
   }
 
   async updateRastreio(id: string, codigoRastreio: string, adminId: string) {
+    if (!id || !codigoRastreio || !adminId) {
+      throw new BadRequestException('Dados incompletos para atualização');
+    }
+    
     const pedido = await this.pedidoRepository.findById(id);
     
     if (!pedido) {
@@ -266,6 +350,10 @@ export class PedidosService {
   }
 
   async cancelAdmin(id: string, motivo?: string, adminId?: string) {
+    if (!id) {
+      throw new BadRequestException('ID do pedido é obrigatório');
+    }
+    
     const pedido = await this.pedidoRepository.findById(id);
     
     if (!pedido) {
@@ -273,9 +361,10 @@ export class PedidosService {
     }
 
     if (pedido.status !== StatusPedido.pendente && pedido.status !== StatusPedido.pagamento_confirmado) {
-      throw new BadRequestException('Só é possível cancelar pedidos pendentes');
+      throw new BadRequestException('Só é possível cancelar pedidos pendentes ou com pagamento confirmado');
     }
 
+    // ✅ RESTAURA ESTOQUE se necessário
     if (pedido.status === StatusPedido.pagamento_confirmado && pedido.itens) {
       for (const item of pedido.itens) {
         await this.produtoRepository.incrementEstoque(item.produtoId, item.quantidade);
@@ -299,11 +388,7 @@ export class PedidosService {
   }
 
   async findPedidosByCliente(clienteId: string, page = 1, limit = 10) {
-    const [data, total] = await Promise.all([
-      this.pedidoRepository.findByUser(clienteId, page, limit),
-      this.pedidoRepository.countByUser(clienteId),
-    ]);
-    return { data, total, page, limit };
+    return this.findByUser(clienteId, page, limit);
   }
 
   async getOrderStats() {
@@ -311,32 +396,59 @@ export class PedidosService {
   }
 
   async getRecentOrders(limit: number = 10) {
-    return this.pedidoRepository.findRecentOrders(limit);
+    const safeLimit = Math.min(limit, 50);
+    return this.pedidoRepository.findRecentOrders(safeLimit);
   }
 
   async getOrdersByPeriod(startDate: Date, endDate: Date, page = 1, limit = 10) {
-    return this.pedidoRepository.findByPeriod(startDate, endDate, page, limit);
+    if (!startDate || !endDate) {
+      throw new BadRequestException('Datas de início e fim são obrigatórias');
+    }
+    
+    if (startDate > endDate) {
+      throw new BadRequestException('Data de início não pode ser maior que data de fim');
+    }
+    
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 100);
+    
+    return this.pedidoRepository.findByPeriod(startDate, endDate, safePage, safeLimit);
   }
 
   async searchOrders(searchTerm: string, page = 1, limit = 10) {
-    return this.pedidoRepository.findByCliente(searchTerm, page, limit);
+    if (!searchTerm || searchTerm.trim().length < 2) {
+      throw new BadRequestException('Termo de busca deve ter pelo menos 2 caracteres');
+    }
+    
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.min(Math.max(1, limit), 50);
+    
+    return this.pedidoRepository.findByCliente(searchTerm, safePage, safeLimit);
   }
 
+  // ==================== MÉTODOS PRIVADOS ====================
+  
   private async notifyAdminsNewOrder(pedido: any, user: any, totalItens: number) {
+    // ✅ findAllAdmins sem argumento
     const admins = await this.userRepository.findAllAdmins();
     
-    if (admins.length === 0) return;
+    if (!admins || admins.length === 0) return;
 
     const valorFormatado = this.formatCurrency(pedido.total);
     const itensTexto = totalItens === 1 ? '1 item' : `${totalItens} itens`;
 
-    for (const admin of admins) {
-      await this.notificacoesService.create(admin.id, {
+    // ✅ LIMITA NOTIFICAÇÕES
+    const adminsToNotify = admins.slice(0, 10);
+    
+    const notifyPromises = adminsToNotify.map(admin =>
+      this.notificacoesService.create(admin.id, {
         tipo: 'sistema',
         titulo: '🛒 NOVO PEDIDO!',
         mensagem: `Pedido #${pedido.numero} - ${user.nome} - ${itensTexto} - ${valorFormatado}`,
-      });
-    }
+      }).catch(err => this.logger.error(`Erro notificar admin ${admin.id}: ${err.message}`))
+    );
+    
+    await Promise.allSettled(notifyPromises);
   }
 
   private async notifyUserStatusUpdate(pedido: any, statusAntigo: string, statusNovo: string, codigoRastreio?: string) {
