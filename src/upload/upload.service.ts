@@ -1,10 +1,7 @@
-// src/upload/upload.service.ts - versão sem sharp
+// src/upload/upload.service.ts - sem tipagem do Express
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { v4 as uuidv4 } from 'uuid';
-
-// Remove a importação do sharp
-// import * as sharp from 'sharp';
 
 export enum Buckets {
   PRODUTOS = 'produtos-imagens',
@@ -30,6 +27,16 @@ export const BUCKET_CONFIGS = {
   },
 };
 
+// Interface própria para o arquivo (não depende do Express)
+interface UploadedFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
 export interface UploadResult {
   url: string;
   path: string;
@@ -43,15 +50,13 @@ export class UploadService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
   async uploadProductImage(
-    file: Express.Multer.File,
+    file: UploadedFile,  // ← MUDOU: agora usa interface própria
     produtoId: string,
     options?: { isPrincipal?: boolean; ordem?: number }
   ): Promise<UploadResult> {
     this.validateFile(file, Buckets.PRODUTOS);
 
-    // Versão sem processamento de imagem (upload direto)
     const fileBuffer = file.buffer;
-
     const extension = file.originalname.split('.').pop();
     const fileName = `${uuidv4()}.${extension}`;
     const path = `${produtoId}/${fileName}`;
@@ -77,7 +82,7 @@ export class UploadService {
   }
 
   async uploadMultipleProductImages(
-    files: Express.Multer.File[],
+    files: UploadedFile[],  // ← MUDOU
     produtoId: string,
   ): Promise<Array<{ url: string; path: string; ordem: number }>> {
     const uploadPromises = files.map((file, index) =>
@@ -105,7 +110,7 @@ export class UploadService {
     }
   }
 
-  private validateFile(file: Express.Multer.File, bucket: Buckets) {
+  private validateFile(file: UploadedFile, bucket: Buckets) {  // ← MUDOU
     const config = BUCKET_CONFIGS[bucket];
     
     if (!config.allowedTypes.includes(file.mimetype)) {

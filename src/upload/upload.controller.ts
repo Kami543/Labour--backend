@@ -41,7 +41,7 @@ export class UploadController {
   })
   @UseInterceptors(FileInterceptor('file'))
   async uploadProductImage(
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFile() file: any,  // ← MUDOU: any em vez de Express.Multer.File
     @Param('produtoId') produtoId: string,
   ) {
     this.logger.log(`Upload de imagem para produto ${produtoId}`);
@@ -63,7 +63,7 @@ export class UploadController {
   @ApiParam({ name: 'produtoId', description: 'ID do produto' })
   @UseInterceptors(FilesInterceptor('files', 10))
   async uploadMultipleProductImages(
-    @UploadedFiles() files: Express.Multer.File[],
+    @UploadedFiles() files: any[],  // ← MUDOU: any[]
     @Param('produtoId') produtoId: string,
   ) {
     this.logger.log(`Upload múltiplo de ${files?.length || 0} imagens para produto ${produtoId}`);
