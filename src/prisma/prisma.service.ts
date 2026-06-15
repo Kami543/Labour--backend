@@ -12,9 +12,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     }
 
     super({
-      log: process.env.NODE_ENV === 'development'
-        ? ['warn', 'error']   // ← removido 'query' e 'info' — cada query logada aloca string
-        : ['error'],
+      log: ['error'],
       datasources: {
         db: { url: process.env.DATABASE_URL },
       },
@@ -24,23 +22,27 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   async onModuleInit() {
-    await this.$connect();
-    this.logger.log('Prisma connected');
+    // Timeout de 10s — se o banco não responder, o app sobe mesmo assim
+    // e falha na primeira query com erro claro em vez de travar o boot
+    const connectWithTimeout = Promise.race([
+      this.$connect(),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Prisma $connect timeout (10s)')), 10_000),
+      ),
+    ]);
+
+    try {
+      await connectWithTimeout;
+      this.logger.log('Prisma connected');
+    } catch (err: any) {
+      // Em produção, logar e continuar — não derrubar o processo
+      // O Prisma tenta reconectar automaticamente na próxima query
+      this.logger.error(`Prisma connect failed: ${err.message}`);
+      if (process.env.NODE_ENV !== 'production') throw err;
+    }
   }
 
   async onModuleDestroy() {
     await this.$disconnect();
-  }
-
-  async cleanDatabase() {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('cleanDatabase cannot be called in production');
-    }
-
-    const models = Reflect.ownKeys(this).filter(
-      (key) => key[0] !== '_' && key[0] !== '$' && typeof (this as any)[key] === 'object',
-    );
-
-    return Promise.all(models.map((modelKey) => (this as any)[modelKey].deleteMany()));
   }
 }
