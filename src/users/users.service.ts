@@ -34,7 +34,7 @@ export class UserService {
         email: createUserDto.email,
         cpf: createUserDto.cpf,
         senha: hashedPassword,
-        endereco: createUserDto.endereco,    // objeto JSON conforme schema
+        endereco: createUserDto.endereco,
         role: createUserDto.role || 'USER',
       });
 
@@ -58,7 +58,6 @@ export class UserService {
   async findById(id: string): Promise<UserResponseDto> {
     this.logger.log(`Buscando usuário com ID: ${id}`);
 
-    // Tenta buscar do cache
     let user = cache.get<any>(`user:${id}`);
     if (!user) {
       try {
@@ -77,9 +76,97 @@ export class UserService {
     return new UserResponseDto(user);
   }
 
+  // NOVO: Buscar usuário pelo email (para notificações)
+  async findByEmail(email: string): Promise<UserResponseDto | null> {
+    this.logger.log(`Buscando usuário com email: ${email}`);
+    
+    let user = cache.get<any>(`user:email:${email}`);
+    if (!user) {
+      try {
+        user = await this.userRepository.findByEmail(email);
+        if (user) {
+          cache.set(`user:email:${email}`, user);
+        }
+      } catch (error) {
+        this.handlePrismaError(error);
+      }
+    }
+
+    return user ? new UserResponseDto(user) : null;
+  }
+
+  // NOVO: Buscar usuário pelo CPF
+  async findByCpf(cpf: string): Promise<UserResponseDto | null> {
+    this.logger.log(`Buscando usuário com CPF: ${cpf}`);
+    
+    let user = cache.get<any>(`user:cpf:${cpf}`);
+    if (!user) {
+      try {
+        user = await this.userRepository.findByCpf(cpf);
+        if (user) {
+          cache.set(`user:cpf:${cpf}`, user);
+        }
+      } catch (error) {
+        this.handlePrismaError(error);
+      }
+    }
+
+    return user ? new UserResponseDto(user) : null;
+  }
+
+  // NOVO: Buscar todos os admins (para notificações em massa)
+  async findAllAdmins(): Promise<UserResponseDto[]> {
+    this.logger.log('Buscando todos os administradores...');
+    
+    let admins = cache.get<any[]>('users:admins');
+    if (!admins) {
+      try {
+        admins = await this.userRepository.findByRole('ADMIN');
+        if (admins) {
+          cache.set('users:admins', admins);
+        }
+      } catch (error) {
+        this.handlePrismaError(error);
+      }
+    }
+
+    return admins ? admins.map(admin => new UserResponseDto(admin)) : [];
+  }
+
+  // NOVO: Buscar todos os clientes (role USER)
+  async findAllClients(): Promise<UserResponseDto[]> {
+    this.logger.log('Buscando todos os clientes...');
+    
+    let clients = cache.get<any[]>('users:clients');
+    if (!clients) {
+      try {
+        clients = await this.userRepository.findByRole('USER');
+        if (clients) {
+          cache.set('users:clients', clients);
+        }
+      } catch (error) {
+        this.handlePrismaError(error);
+      }
+    }
+
+    return clients ? clients.map(client => new UserResponseDto(client)) : [];
+  }
+
+  // NOVO: Buscar usuários por role (genérico)
+  async findByRole(role: string): Promise<UserResponseDto[]> {
+    this.logger.log(`Buscando usuários com role: ${role}`);
+    
+    try {
+      const users = await this.userRepository.findByRole(role);
+      return users.map(user => new UserResponseDto(user));
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
   async findDetail(id: string): Promise<UserDetailResponseDto> {
     this.logger.log(`Buscando detalhes do usuário com ID: ${id}`);
-    const userDto = await this.findById(id); // já usa cache e valida existência
+    const userDto = await this.findById(id);
 
     try {
       const pedidosTotal = await this.userRepository.countPedidos(id);
@@ -100,7 +187,6 @@ export class UserService {
   async update(id: string, updateUserDto: UpdateUserDto): Promise<UserResponseDto> {
     this.logger.log(`Atualizando usuário com ID: ${id}`);
 
-    // Valida existência (já usa cache)
     await this.findById(id);
 
     const updateData: any = {};
@@ -119,21 +205,26 @@ export class UserService {
         throw new ConflictException('Email já está em uso');
       }
       updateData.email = updateUserDto.email;
+      // Invalida cache do email
+      cache.del(`user:email:${updateUserDto.email}`);
     }
 
-    // Se o CPF for passado na atualização, valida
     if (updateUserDto.cpf !== undefined) {
       const cpfExists = await this.userRepository.findByCpf(updateUserDto.cpf);
       if (cpfExists && cpfExists.id !== id) {
         throw new ConflictException('CPF já está em uso');
       }
       updateData.cpf = updateUserDto.cpf;
+      // Invalida cache do CPF
+      cache.del(`user:cpf:${updateUserDto.cpf}`);
     }
 
     try {
       const updatedUser = await this.userRepository.update(id, updateData);
-      // Invalida o cache após atualização
+      // Invalida todos os caches relacionados
       cache.del(`user:${id}`);
+      cache.del('users:admins');
+      cache.del('users:clients');
       this.logger.log(`Usuário com ID ${id} atualizado com sucesso`);
       return new UserResponseDto(updatedUser);
     } catch (error) {
@@ -143,11 +234,16 @@ export class UserService {
 
   async delete(id: string): Promise<void> {
     this.logger.log(`Deletando usuário com ID: ${id}`);
-    await this.findById(id); // valida existência
+    const user = await this.findById(id);
+    
+    // Invalida caches antes de deletar
+    cache.del(`user:${id}`);
+    if (user.email) cache.del(`user:email:${user.email}`);
+    cache.del('users:admins');
+    cache.del('users:clients');
 
     try {
       await this.userRepository.delete(id);
-      cache.del(`user:${id}`);
       this.logger.log(`Usuário com ID ${id} deletado com sucesso`);
     } catch (error) {
       this.handlePrismaError(error);
@@ -176,6 +272,24 @@ export class UserService {
     await this.findById(userId);
     try {
       return this.userRepository.findNotificacoesByUserId(userId, lidas);
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  // NOVO: Contar número de admins
+  async countAdmins(): Promise<number> {
+    try {
+      return await this.userRepository.countByRole('ADMIN');
+    } catch (error) {
+      this.handlePrismaError(error);
+    }
+  }
+
+  // NOVO: Contar número de clientes
+  async countClients(): Promise<number> {
+    try {
+      return await this.userRepository.countByRole('USER');
     } catch (error) {
       this.handlePrismaError(error);
     }

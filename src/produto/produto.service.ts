@@ -1,3 +1,4 @@
+// src/produto/produto.service.ts
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ProdutoRepository } from './produto.repository';
 import { 
@@ -10,6 +11,8 @@ import {
 } from './dto/produto.dto';
 import { slugify } from '../common/utils/slugify';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificacoesService } from '../notificacoes/notificacoes.service';
+import { UserRepository } from '../users/users.repository';
 
 @Injectable()
 export class ProdutoService {
@@ -18,6 +21,8 @@ export class ProdutoService {
   constructor(
     private readonly produtoRepository: ProdutoRepository,
     private readonly prisma: PrismaService,
+    private readonly notificacoesService: NotificacoesService,
+    private readonly userRepository: UserRepository,
   ) {}
 
   async create(createProdutoDto: CreateProdutoDto): Promise<ProdutoResponseDto> {
@@ -38,8 +43,8 @@ export class ProdutoService {
       categoria: createProdutoDto.categoria,
       tag: createProdutoDto.tag,
       estoque: createProdutoDto.estoque,
-      cores: JSON.stringify(createProdutoDto.cores),
-      tamanhos: JSON.stringify(createProdutoDto.tamanhos),
+      cores: JSON.stringify(createProdutoDto.cores || []),
+      tamanhos: JSON.stringify(createProdutoDto.tamanhos || []),
     };
 
     const imagens = createProdutoDto.imagens?.map((img, index) => ({
@@ -51,6 +56,9 @@ export class ProdutoService {
 
     const produto = await this.produtoRepository.createWithImages(data, imagens);
     this.logger.log(`Produto criado com ID: ${produto.id}`);
+    
+    await this.notifyClientsAboutNewProduct(produto);
+    
     return new ProdutoResponseDto(produto);
   }
 
@@ -64,7 +72,6 @@ export class ProdutoService {
     this.logger.log(`Buscando produto com ID: ${id}`);
     const produto = await this.produtoRepository.findByIdWithImages(id);
     if (!produto) {
-      this.logger.error(`Produto com ID ${id} não encontrado`);
       throw new NotFoundException('Produto não encontrado');
     }
     return new ProdutoResponseDto(produto);
@@ -74,7 +81,6 @@ export class ProdutoService {
     this.logger.log(`Buscando detalhes do produto com ID: ${id}`);
     const produto = await this.produtoRepository.findByIdWithImages(id);
     if (!produto) {
-      this.logger.error(`Produto com ID ${id} não encontrado`);
       throw new NotFoundException('Produto não encontrado');
     }
 
@@ -88,7 +94,6 @@ export class ProdutoService {
     this.logger.log(`Buscando produto por slug: ${slug}`);
     const produto = await this.produtoRepository.findBySlug(slug);
     if (!produto) {
-      this.logger.error(`Produto com slug ${slug} não encontrado`);
       throw new NotFoundException('Produto não encontrado');
     }
 
@@ -116,18 +121,21 @@ export class ProdutoService {
     return produtos.map(produto => new ProdutoResponseDto(produto));
   }
 
+  // ✅ MÉTODO ADICIONADO
   async findNovos(dias: number = 30) {
     this.logger.log(`Buscando produtos novos dos últimos ${dias} dias...`);
     const produtos = await this.produtoRepository.findNovos(dias);
     return produtos.map(produto => new ProdutoResponseDto(produto));
   }
 
+  // ✅ MÉTODO ADICIONADO
   async findPopulares(limit: number = 10) {
     this.logger.log('Buscando produtos populares...');
     const produtos = await this.produtoRepository.findPopulares(limit);
     return produtos.map(produto => new ProdutoResponseDto(produto));
   }
 
+  // ✅ MÉTODO ADICIONADO
   async findSimilares(id: string, limit: number = 5) {
     this.logger.log(`Buscando produtos similares ao produto ${id}...`);
     const produto = await this.produtoRepository.findById(id);
@@ -143,7 +151,6 @@ export class ProdutoService {
     
     const produto = await this.produtoRepository.findById(id);
     if (!produto) {
-      this.logger.error(`Produto com ID ${id} não encontrado`);
       throw new NotFoundException('Produto não encontrado');
     }
 
@@ -167,10 +174,11 @@ export class ProdutoService {
     }
 
     const updatedProduto = await this.produtoRepository.update(id, updateData);
-    this.logger.log(`Produto com ID ${id} atualizado com sucesso`);
+    this.logger.log(`Produto com ID ${id} atualizado`);
     return new ProdutoResponseDto(updatedProduto);
   }
 
+  // ✅ MÉTODO ADICIONADO
   async addImagem(produtoId: string, imagemDto: CreateProdutoImagemDto): Promise<ProdutoImagemResponseDto> {
     this.logger.log(`Adicionando imagem ao produto ${produtoId}`);
     
@@ -198,11 +206,13 @@ export class ProdutoService {
     return new ProdutoImagemResponseDto(imagem);
   }
 
+  // ✅ MÉTODO ADICIONADO
   async removeImagem(imagemId: string): Promise<void> {
     this.logger.log(`Removendo imagem ${imagemId}`);
     await this.produtoRepository.removeImagem(imagemId);
   }
 
+  // ✅ MÉTODO ADICIONADO
   async setImagemPrincipal(produtoId: string, imagemId: string): Promise<void> {
     this.logger.log(`Definindo imagem ${imagemId} como principal do produto ${produtoId}`);
     
@@ -248,11 +258,10 @@ export class ProdutoService {
     this.logger.log(`Deletando produto com ID: ${id}`);
     const produto = await this.produtoRepository.findById(id);
     if (!produto) {
-      this.logger.error(`Produto com ID ${id} não encontrado`);
       throw new NotFoundException('Produto não encontrado');
     }
     await this.produtoRepository.delete(id);
-    this.logger.log(`Produto com ID ${id} deletado com sucesso`);
+    this.logger.log(`Produto com ID ${id} deletado`);
   }
 
   async getCoresDisponiveis(): Promise<string[]> {
@@ -261,5 +270,58 @@ export class ProdutoService {
 
   async getTamanhosDisponiveis(): Promise<string[]> {
     return this.produtoRepository.getTamanhosDisponiveis();
+  }
+
+  async notifyPromotion(produtoId: string, desconto: number, mensagemPersonalizada?: string): Promise<void> {
+    const produto = await this.produtoRepository.findById(produtoId);
+    if (!produto) {
+      throw new NotFoundException('Produto não encontrado');
+    }
+    
+    const clients = await this.userRepository.findAllClients();
+    if (clients.length === 0) return;
+    
+    const valorOriginal = Number(produto.preco);
+    const valorComDesconto = valorOriginal * (1 - desconto / 100);
+    const valorFormatado = new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL'
+    }).format(valorComDesconto);
+    
+    const mensagem = mensagemPersonalizada || 
+      `🔥 ${produto.nome} com ${desconto}% OFF! Por apenas ${valorFormatado}. Aproveite!`;
+    
+    for (const client of clients) {
+      await this.notificacoesService.create(client.id, {
+        tipo: 'promo',
+        titulo: `🔥 ${desconto}% DE DESCONTO!`,
+        mensagem: mensagem,
+      });
+    }
+  }
+
+  private async notifyClientsAboutNewProduct(produto: any): Promise<void> {
+    try {
+      const clients = await this.userRepository.findAllClients();
+      
+      if (clients.length === 0) return;
+      
+      const valorFormatado = new Intl.NumberFormat('pt-BR', {
+        style: 'currency',
+        currency: 'BRL'
+      }).format(Number(produto.preco));
+      
+      for (const client of clients) {
+        await this.notificacoesService.create(client.id, {
+          tipo: 'limitado',
+          titulo: '✨ NOVIDADE NA COLEÇÃO!',
+          mensagem: `Novo produto: ${produto.nome} - ${valorFormatado} - ${produto.categoria}`,
+        });
+      }
+      
+      this.logger.log(`Notificados ${clients.length} clientes sobre o novo produto`);
+    } catch (error) {
+      this.logger.error(`Erro ao notificar clientes: ${error.message}`);
+    }
   }
 }

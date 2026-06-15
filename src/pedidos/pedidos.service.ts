@@ -1,15 +1,14 @@
-// pedidos.service.ts - VERSÃO COMPLETAMENTE CORRIGIDA
+// src/pedidos/pedidos.service.ts
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PedidoRepository } from './pedido.repository';
 import { CartRepository } from '../cart/cart.repository';
 import { ProdutoRepository } from '../produto/produto.repository';
 import { UserRepository } from '../users/users.repository';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
-import { CreatePedidoDto, CreatePedidoItemDto } from './dto/create-pedido.dto';
+import { CreatePedidoDto } from './dto/create-pedido.dto';
 import { UpdatePedidoStatusDto } from './dto/update-pedido-status.dto';
 import { StatusPedido } from '@prisma/client';
 
-// Interface para os itens do pedido
 interface PedidoItemInput {
   produtoId: string;
   quantidade: number;
@@ -28,21 +27,17 @@ export class PedidosService {
     private userRepository: UserRepository,
   ) {}
 
-  // ========== MÉTODO CREATE CORRIGIDO ==========
-  
   async create(userId: string, createPedidoDto: CreatePedidoDto) {
     const user = await this.userRepository.findById(userId);
     const { itens, enderecoEntrega, frete = 0, imposto = 0, observacoes } = createPedidoDto;
     
     let cartItems: any[] = [];
     let subtotal = 0;
-    const pedidoItens: PedidoItemInput[] = []; // ← TIPO EXPLÍCITO
+    const pedidoItens: PedidoItemInput[] = [];
 
-    // VERIFICA SE TEM ITENS DIRETOS NO DTO
     if (itens && itens.length > 0) {
       console.log(`📦 Criando pedido com ${itens.length} itens diretos`);
       
-      // Processa os itens enviados diretamente
       for (const item of itens) {
         const produto = await this.produtoRepository.findById(item.produtoId);
         
@@ -65,20 +60,17 @@ export class PedidosService {
           cor: item.cor || null,
         });
         
-        // Atualiza estoque
         await this.produtoRepository.decrementEstoque(item.produtoId, item.quantidade);
       }
       
     } else {
-      // SE NÃO TEM ITENS DIRETOS, USA O CARRINHO
       console.log('🛒 Criando pedido a partir do carrinho');
       cartItems = await this.cartRepository.findCartByUser(userId);
       
       if (!cartItems || cartItems.length === 0) {
-        throw new BadRequestException('Carrinho vazio. Adicione itens ao carrinho antes de finalizar o pedido.');
+        throw new BadRequestException('Carrinho vazio.');
       }
       
-      // Processa itens do carrinho
       for (const item of cartItems) {
         if (item.produto.estoque < item.quantidade) {
           throw new BadRequestException(`Estoque insuficiente para ${item.produto.nome}`);
@@ -99,10 +91,8 @@ export class PedidosService {
       }
     }
     
-    // Calcula total
     const total = subtotal + Number(frete) + Number(imposto);
     
-    // Busca endereço (prioriza o enviado, depois o do usuário)
     let enderecoFinal: Record<string, any> = {};
     
     if (enderecoEntrega && typeof enderecoEntrega === 'object' && Object.keys(enderecoEntrega).length > 0) {
@@ -120,7 +110,6 @@ export class PedidosService {
       };
     }
     
-    // Cria o pedido
     const pedido = await this.pedidoRepository.createPedido({
       userId,
       subtotal,
@@ -128,11 +117,10 @@ export class PedidosService {
       imposto: Number(imposto),
       total,
       enderecoEntrega: enderecoFinal,
-      observacoes: observacoes || undefined, // ← null não é permitido, usar undefined
+      observacoes: observacoes || undefined,
       status: StatusPedido.pendente,
     });
     
-    // Adiciona os itens ao pedido
     for (const item of pedidoItens) {
       await this.pedidoRepository.createPedidoItem({
         pedidoId: pedido.id,
@@ -144,30 +132,26 @@ export class PedidosService {
       });
     }
     
-    // Se usou carrinho, limpa ele
     if (cartItems.length > 0) {
       await this.cartRepository.clearCart(userId);
     }
     
-    // Notifica o usuário
     await this.notificacoesService.create(userId, {
       tipo: 'sistema',
-      titulo: 'Pedido criado',
-      mensagem: `Seu pedido ${pedido.numero} foi criado com sucesso no valor de ${this.formatCurrency(total)}`,
+      titulo: '✅ Pedido criado!',
+      mensagem: `Pedido #${pedido.numero} criado no valor de ${this.formatCurrency(total)}.`,
     });
     
-    // Retorna o pedido completo
+    await this.notifyAdminsNewOrder(pedido, user, pedidoItens.length);
+    
     return await this.pedidoRepository.findByIdAndUser(pedido.id, userId);
   }
-  
-  // ========== MÉTODOS EXISTENTES (SEM ALTERAÇÕES) ==========
-  
+
   async findByUser(userId: string, page = 1, limit = 10) {
     const [data, total] = await Promise.all([
       this.pedidoRepository.findByUser(userId, page, limit),
       this.pedidoRepository.countByUser(userId),
     ]);
-
     return { data, total, page, limit };
   }
 
@@ -194,18 +178,15 @@ export class PedidosService {
 
     await this.notificacoesService.create(userId, {
       tipo: 'sistema',
-      titulo: 'Pedido cancelado',
-      mensagem: `Seu pedido ${pedido.numero} foi cancelado`,
+      titulo: '❌ Pedido cancelado',
+      mensagem: `Pedido #${pedido.numero} foi cancelado.`,
     });
 
     return canceledPedido;
   }
 
-  // ========== MÉTODOS ADMIN ==========
-  
   async findAllAdmin(page = 1, limit = 10, status?: string) {
     const skip = (page - 1) * limit;
-    
     const where = status ? { status: status as StatusPedido } : {};
     
     const [data, total] = await Promise.all([
@@ -217,8 +198,7 @@ export class PedidosService {
   }
 
   async findByStatus(status: string) {
-    const pedidos = await this.pedidoRepository.findByStatus(status as StatusPedido);
-    return pedidos;
+    return this.pedidoRepository.findByStatus(status as StatusPedido);
   }
 
   async findOneAdmin(id: string) {
@@ -229,7 +209,7 @@ export class PedidosService {
     return pedido;
   }
 
-  async updateStatusAdmin(id: string, updateStatusDto: UpdatePedidoStatusDto) {
+  async updateStatusAdmin(id: string, updateStatusDto: UpdatePedidoStatusDto, adminId: string) {
     const pedido = await this.pedidoRepository.findById(id);
     
     if (!pedido) {
@@ -240,35 +220,34 @@ export class PedidosService {
       throw new BadRequestException('Pedido já cancelado');
     }
 
+    const statusAntigo = pedido.status;
+    const statusNovo = updateStatusDto.status;
+
     let dataEnvio: Date | undefined;
     let codigoRastreio: string | undefined;
 
-    if (updateStatusDto.status === StatusPedido.enviado) {
+    if (statusNovo === StatusPedido.enviado) {
       dataEnvio = new Date();
       codigoRastreio = updateStatusDto.codigoRastreio;
       
       if (!codigoRastreio) {
-        throw new BadRequestException('Código de rastreio é obrigatório quando status for "enviado"');
+        throw new BadRequestException('Código de rastreio é obrigatório');
       }
     }
 
     const updatedPedido = await this.pedidoRepository.updateStatus(
       id,
-      updateStatusDto.status,
+      statusNovo,
       dataEnvio,
       codigoRastreio
     );
 
-    await this.notificacoesService.create(pedido.userId, {
-      tipo: 'entrega',
-      titulo: 'Status do pedido atualizado',
-      mensagem: `Seu pedido ${pedido.numero} foi atualizado para ${updateStatusDto.status}`,
-    });
+    await this.notifyUserStatusUpdate(pedido, statusAntigo, statusNovo, codigoRastreio);
 
     return updatedPedido;
   }
 
-  async updateRastreio(id: string, codigoRastreio: string) {
+  async updateRastreio(id: string, codigoRastreio: string, adminId: string) {
     const pedido = await this.pedidoRepository.findById(id);
     
     if (!pedido) {
@@ -279,14 +258,14 @@ export class PedidosService {
 
     await this.notificacoesService.create(pedido.userId, {
       tipo: 'entrega',
-      titulo: 'Pedido enviado',
-      mensagem: `Seu pedido ${pedido.numero} foi enviado. Código de rastreio: ${codigoRastreio}`,
+      titulo: '📦 Código de rastreio!',
+      mensagem: `Pedido #${pedido.numero} - Código: ${codigoRastreio}`,
     });
 
     return updatedPedido;
   }
 
-  async cancelAdmin(id: string, motivo?: string) {
+  async cancelAdmin(id: string, motivo?: string, adminId?: string) {
     const pedido = await this.pedidoRepository.findById(id);
     
     if (!pedido) {
@@ -294,7 +273,7 @@ export class PedidosService {
     }
 
     if (pedido.status !== StatusPedido.pendente && pedido.status !== StatusPedido.pagamento_confirmado) {
-      throw new BadRequestException('Só é possível cancelar pedidos pendentes ou com pagamento confirmado');
+      throw new BadRequestException('Só é possível cancelar pedidos pendentes');
     }
 
     if (pedido.status === StatusPedido.pagamento_confirmado && pedido.itens) {
@@ -304,17 +283,16 @@ export class PedidosService {
     }
 
     const observacoesAtualizadas = pedido.observacoes 
-      ? `${pedido.observacoes}\n[ADMIN] Cancelado: ${motivo || 'Sem motivo informado'}`
-      : `[ADMIN] Cancelado: ${motivo || 'Sem motivo informado'}`;
+      ? `${pedido.observacoes}\n[ADMIN] Cancelado: ${motivo || 'Sem motivo'}`
+      : `[ADMIN] Cancelado: ${motivo || 'Sem motivo'}`;
 
     const canceledPedido = await this.pedidoRepository.updateStatus(id, StatusPedido.cancelado);
-
     await this.pedidoRepository.update(id, { observacoes: observacoesAtualizadas });
 
     await this.notificacoesService.create(pedido.userId, {
       tipo: 'sistema',
-      titulo: 'Pedido cancelado pelo administrador',
-      mensagem: `Seu pedido ${pedido.numero} foi cancelado. Motivo: ${motivo || 'Não informado'}`,
+      titulo: '⚠️ Pedido cancelado',
+      mensagem: `Pedido #${pedido.numero} foi cancelado. Motivo: ${motivo || 'Não informado'}.`,
     });
 
     return canceledPedido;
@@ -325,7 +303,6 @@ export class PedidosService {
       this.pedidoRepository.findByUser(clienteId, page, limit),
       this.pedidoRepository.countByUser(clienteId),
     ]);
-
     return { data, total, page, limit };
   }
 
@@ -345,7 +322,57 @@ export class PedidosService {
     return this.pedidoRepository.findByCliente(searchTerm, page, limit);
   }
 
-  // Helper privado
+  private async notifyAdminsNewOrder(pedido: any, user: any, totalItens: number) {
+    const admins = await this.userRepository.findAllAdmins();
+    
+    if (admins.length === 0) return;
+
+    const valorFormatado = this.formatCurrency(pedido.total);
+    const itensTexto = totalItens === 1 ? '1 item' : `${totalItens} itens`;
+
+    for (const admin of admins) {
+      await this.notificacoesService.create(admin.id, {
+        tipo: 'sistema',
+        titulo: '🛒 NOVO PEDIDO!',
+        mensagem: `Pedido #${pedido.numero} - ${user.nome} - ${itensTexto} - ${valorFormatado}`,
+      });
+    }
+  }
+
+  private async notifyUserStatusUpdate(pedido: any, statusAntigo: string, statusNovo: string, codigoRastreio?: string) {
+    const statusMessages: Record<string, { titulo: string; mensagem: string; tipo: any }> = {
+      pagamento_confirmado: {
+        tipo: 'pagamento',
+        titulo: '✅ Pagamento Confirmado!',
+        mensagem: `Pedido #${pedido.numero} - Pagamento confirmado.`,
+      },
+      enviado: {
+        tipo: 'entrega',
+        titulo: '📦 Pedido Enviado!',
+        mensagem: `Pedido #${pedido.numero} foi enviado! ${codigoRastreio ? `Código: ${codigoRastreio}` : ''}`,
+      },
+      entregue: {
+        tipo: 'entrega',
+        titulo: '🎉 Pedido Entregue!',
+        mensagem: `Pedido #${pedido.numero} foi entregue. Obrigado!`,
+      },
+      cancelado: {
+        tipo: 'sistema',
+        titulo: '❌ Pedido Cancelado',
+        mensagem: `Pedido #${pedido.numero} foi cancelado.`,
+      },
+    };
+
+    const message = statusMessages[statusNovo];
+    if (message && statusAntigo !== statusNovo) {
+      await this.notificacoesService.create(pedido.userId, {
+        tipo: message.tipo,
+        titulo: message.titulo,
+        mensagem: message.mensagem,
+      });
+    }
+  }
+
   private formatCurrency(value: number): string {
     return new Intl.NumberFormat('pt-BR', {
       style: 'currency',

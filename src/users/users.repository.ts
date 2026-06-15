@@ -1,12 +1,11 @@
-import { Injectable, ConflictException, Logger, NotFoundException } from '@nestjs/common';
+// src/users/users.repository.ts
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { User } from '@prisma/client';
 import { BaseRepository } from '../common/utils/baseRepository';
 
 @Injectable()
 export class UserRepository extends BaseRepository<User> {
-  private readonly logger = new Logger(UserRepository.name);
-
   constructor(protected readonly prisma: PrismaService) {
     super(prisma);
   }
@@ -15,274 +14,181 @@ export class UserRepository extends BaseRepository<User> {
     return this.prisma.user;
   }
 
-  // ✅ Usando findUnique para campos únicos (mais rápido)
   async findByEmail(email: string): Promise<User | null> {
-    try {
-      return await this.model.findUnique({
-        where: { email },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'buscar usuário por email');
-    }
+    return this.model.findUnique({ where: { email } });
   }
 
   async findByCpf(cpf: string): Promise<User | null> {
-    try {
-      return await this.model.findUnique({
-        where: { cpf },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'buscar usuário por CPF');
-    }
+    return this.model.findUnique({ where: { cpf } });
+  }
+
+  async findByRole(role: string): Promise<User[]> {
+    return this.model.findMany({ where: { role: role as any } });
+  }
+
+  async findAllAdmins(): Promise<User[]> {
+    return this.model.findMany({ where: { role: 'ADMIN' } });
+  }
+
+  async findAllClients(): Promise<User[]> {
+    return this.model.findMany({ where: { role: 'USER' } });
+  }
+
+  async findActiveUsers(): Promise<User[]> {
+    return this.model.findMany({
+      where: {
+        OR: [
+          { lockedUntil: null },
+          { lockedUntil: { lt: new Date() } }
+        ]
+      },
+    });
+  }
+
+  async findByIds(ids: string[]): Promise<User[]> {
+    return this.model.findMany({ where: { id: { in: ids } } });
   }
 
   async emailExists(email: string): Promise<boolean> {
-    try {
-      const user = await this.model.findUnique({
-        where: { email },
-        select: { id: true },
-      });
-      return !!user;
-    } catch (error) {
-      this.handlePrismaError(error, 'verificar existência de email');
-    }
+    const user = await this.model.findUnique({ where: { email }, select: { id: true } });
+    return !!user;
   }
 
   async cpfExists(cpf: string): Promise<boolean> {
-    try {
-      const user = await this.model.findUnique({
-        where: { cpf },
-        select: { id: true },
-      });
-      return !!user;
-    } catch (error) {
-      this.handlePrismaError(error, 'verificar existência de CPF');
-    }
+    const user = await this.model.findUnique({ where: { cpf }, select: { id: true } });
+    return !!user;
+  }
+
+  async countByRole(role: string): Promise<number> {
+    return this.prisma.user.count({ where: { role: role as any } });
   }
 
   async countPedidos(userId: string): Promise<number> {
-    try {
-      return await this.prisma.pedido.count({
-        where: { userId },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'contar pedidos do usuário');
-    }
+    return this.prisma.pedido.count({ where: { userId } });
   }
 
   async countCarrinho(userId: string): Promise<number> {
-    try {
-      return await this.prisma.cartItem.count({
-        where: { userId },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'contar itens do carrinho');
-    }
+    return this.prisma.cartItem.count({ where: { userId } });
   }
 
   async countNotificacoesNaoLidas(userId: string): Promise<number> {
-    try {
-      return await this.prisma.notificacao.count({
-        where: { userId, lida: false },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'contar notificações não lidas');
-    }
+    return this.prisma.notificacao.count({ where: { userId, lida: false } });
   }
 
   async findPedidosByUserId(userId: string) {
-    try {
-      return await this.prisma.pedido.findMany({
-        where: { userId },
-        include: {
-          itens: {
-            include: {
-              produto: {
-                include: {
-                  imagens: {
-                    where: { isPrincipal: true },
-                    take: 1,
-                    select: { url: true }
-                  }
-                }
+    return this.prisma.pedido.findMany({
+      where: { userId },
+      include: {
+        itens: {
+          include: {
+            produto: {
+              include: {
+                imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
               }
             }
           }
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'buscar pedidos do usuário');
-    }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   async findCarrinhoByUserId(userId: string) {
-    try {
-      return await this.prisma.cartItem.findMany({
-        where: { userId },
-        include: { 
-          produto: {
-            include: {
-              imagens: {
-                where: { isPrincipal: true },
-                take: 1,
-                select: { url: true }
-              }
-            }
+    return this.prisma.cartItem.findMany({
+      where: { userId },
+      include: { 
+        produto: {
+          include: {
+            imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
           }
-        },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'buscar carrinho do usuário');
-    }
+        }
+      },
+    });
   }
 
   async findNotificacoesByUserId(userId: string, lidas: boolean = false) {
-    try {
-      return await this.prisma.notificacao.findMany({
-        where: { userId, lida: lidas },
-        orderBy: { createdAt: 'desc' },
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'buscar notificações do usuário');
-    }
+    return this.prisma.notificacao.findMany({
+      where: { userId, lida: lidas },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   async updateLastLogin(id: string, ip: string) {
-    try {
-      return await this.model.update({
-        where: { id },
-        data: {
-          lastLoginAt: new Date(),
-          lastLoginIp: ip,
-          failedLoginAttempts: 0
-        }
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'atualizar último login');
-    }
+    return this.model.update({
+      where: { id },
+      data: { lastLoginAt: new Date(), lastLoginIp: ip, failedLoginAttempts: 0 }
+    });
   }
 
   async incrementFailedAttempts(id: string) {
-    try {
-      return await this.model.update({
-        where: { id },
-        data: {
-          failedLoginAttempts: { increment: 1 }
-        }
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'incrementar tentativas falhas');
-    }
+    return this.model.update({
+      where: { id },
+      data: { failedLoginAttempts: { increment: 1 } }
+    });
   }
 
   async lockUser(id: string, durationMinutes: number = 30) {
-    try {
-      const lockedUntil = new Date();
-      lockedUntil.setMinutes(lockedUntil.getMinutes() + durationMinutes);
-      
-      return await this.model.update({
-        where: { id },
-        data: {
-          lockedUntil,
-          failedLoginAttempts: 0
-        }
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'bloquear usuário');
-    }
+    const lockedUntil = new Date();
+    lockedUntil.setMinutes(lockedUntil.getMinutes() + durationMinutes);
+    return this.model.update({
+      where: { id },
+      data: { lockedUntil, failedLoginAttempts: 0 }
+    });
   }
 
   async enableTwoFactor(id: string, secret: string) {
-    try {
-      return await this.model.update({
-        where: { id },
-        data: {
-          twoFactorEnabled: true,
-          twoFactorSecret: secret
-        }
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'ativar 2FA');
-    }
+    return this.model.update({
+      where: { id },
+      data: { twoFactorEnabled: true, twoFactorSecret: secret }
+    });
   }
 
   async disableTwoFactor(id: string) {
-    try {
-      return await this.model.update({
-        where: { id },
-        data: {
-          twoFactorEnabled: false,
-          twoFactorSecret: null
-        }
-      });
-    } catch (error) {
-      this.handlePrismaError(error, 'desativar 2FA');
-    }
+    return this.model.update({
+      where: { id },
+      data: { twoFactorEnabled: false, twoFactorSecret: null }
+    });
   }
 
   async findWithPedidos(id: string) {
-    try {
-      const user = await this.model.findUnique({
-        where: { id },
-        include: {
-          pedidos: {
-            orderBy: { createdAt: 'desc' },
-            take: 10,
-            include: {
-              itens: {
-                include: {
-                  produto: {
-                    include: {
-                      imagens: {
-                        where: { isPrincipal: true },
-                        take: 1,
-                        select: { url: true }
-                      }
-                    }
+    const user = await this.model.findUnique({
+      where: { id },
+      include: {
+        pedidos: {
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+          include: {
+            itens: {
+              include: {
+                produto: {
+                  include: {
+                    imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
                   }
                 }
               }
             }
           }
         }
-      });
-      
-      if (!user) {
-        throw new NotFoundException('Usuário não encontrado');
       }
-      
-      return user;
-    } catch (error) {
-      if (error instanceof NotFoundException) throw error;
-      this.handlePrismaError(error, 'buscar usuário com pedidos');
-    }
+    });
+    
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+    return user;
   }
 
-  // ✅ CORRIGIDO: getDashboardStats - usando userId corretamente
   async getDashboardStats(userId: string) {
-    try {
-      const [pedidosCount, carrinhoCount, notificacoesCount, ultimoPedido, user] = await Promise.all([
-        this.countPedidos(userId),
-        this.countCarrinho(userId),
-        this.countNotificacoesNaoLidas(userId),
-        this.prisma.pedido.findFirst({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-          select: { createdAt: true, total: true, status: true }
-        }),
-        this.findById(userId) // Busca o usuário para obter o createdAt
-      ]);
+    const [pedidosCount, carrinhoCount, notificacoesCount, ultimoPedido, user] = await Promise.all([
+      this.countPedidos(userId),
+      this.countCarrinho(userId),
+      this.countNotificacoesNaoLidas(userId),
+      this.prisma.pedido.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true, total: true, status: true }
+      }),
+      this.findById(userId)
+    ]);
 
-      return {
-        pedidosCount,
-        carrinhoCount,
-        notificacoesCount,
-        ultimoPedido,
-        membroDesde: user?.createdAt // Usa o createdAt do usuário encontrado
-      };
-    } catch (error) {
-      this.handlePrismaError(error, 'buscar estatísticas do dashboard');
-    }
+    return { pedidosCount, carrinhoCount, notificacoesCount, ultimoPedido, membroDesde: user?.createdAt };
   }
 }
