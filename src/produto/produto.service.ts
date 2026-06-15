@@ -630,7 +630,7 @@ export class ProdutoService {
       
       this.logger.log(`Notificados ${notifyPromises.length} clientes sobre o novo produto`);
     } catch (error) {
-      this.logger.error(`Erro ao notificar clientes: ${error.message}`);
+      this.logger.error(`Erro ao notificar clientes: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

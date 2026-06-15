@@ -88,14 +88,14 @@ export class PaymentQueueProcessor {
       };
       
     } catch (error) {
-      this.logger.error(`Payment processing failed: ${error.message}`);
+      this.logger.error(`Payment processing failed: ${error instanceof Error ? error.message : String(error)}`);
       
       await this.prisma.transacao.update({
         where: { id: transactionId },
         data: {
           status: 'FALHOU',
           metadata: {
-            error: String(error.message),
+            error: String(error instanceof Error ? error.message : String(error)),
             failedAt: new Date().toISOString(),
           },
         },
@@ -112,7 +112,7 @@ export class PaymentQueueProcessor {
 
   @OnQueueFailed()
   onFailed(job: Job, error: Error) {
-    this.logger.error(`Payment job ${job.id} failed: ${error.message}`);
+    this.logger.error(`Payment job ${job.id} failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   private async processMercadoPago(details: any) {

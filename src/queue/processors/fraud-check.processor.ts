@@ -69,7 +69,7 @@ export class FraudCheckProcessor {
       };
       
     } catch (error) {
-      this.logger.error(`Fraud check failed: ${error.message}`);
+      this.logger.error(`Fraud check failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }

@@ -40,7 +40,7 @@ export class NotificationQueueProcessor {
       };
       
     } catch (error) {
-      this.logger.error(`Notification failed: ${error.message}`);
+      this.logger.error(`Notification failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
