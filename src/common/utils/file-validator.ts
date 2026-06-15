@@ -1,5 +1,15 @@
 import { BadRequestException } from '@nestjs/common';
 
+// Interface própria para o arquivo (compatível com o que o NestJS/Multer retorna)
+interface UploadedFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
 export interface FileValidationOptions {
   maxSize: number;
   allowedMimeTypes: string[];
@@ -7,7 +17,8 @@ export interface FileValidationOptions {
 }
 
 export class FileValidator {
-  static validateFile(file: Express.Multer.File, options: FileValidationOptions): void {
+  // MUDOU: Express.Multer.File → UploadedFile (ou pode usar 'any' para ser mais flexível)
+  static validateFile(file: UploadedFile | any, options: FileValidationOptions): void {
     if (!file) {
       throw new BadRequestException('Nenhum arquivo fornecido');
     }
