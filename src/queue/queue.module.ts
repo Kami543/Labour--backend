@@ -1,71 +1,74 @@
-// src/queue/queue.module.ts
-import { Module } from '@nestjs/common';
-import { BullModule } from '@nestjs/bull';
+// src/queue/queue.module.ts - VERSÃO LAZY
+import { Module, DynamicModule, OnModuleInit } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { QueueService } from './queue.service';
-import { QueueController } from './queue.controller';
-
-// Processadores
-import { PaymentQueueProcessor } from './processors/payment.processor';
-import { NotificationQueueProcessor } from './processors/notification.processor';
-import { EmailQueueProcessor } from './processors/email.processor';
-import { FraudCheckProcessor } from './processors/fraud-check.processor';
-import { OrderProcessingProcessor } from './processors/order-processing.processor';
-import { InventoryProcessor } from './processors/inventory.processor';
-
-// Módulos necessários
 import { PrismaModule } from '../prisma/prisma.module';
-import { PagamentoModule } from '../pagamento/pagamento.module';
-import { NotificacoesModule } from '../notificacoes/notificacoes.module';
-import { MailModule } from '../mail/mail.module';
 
-@Module({
-  imports: [
-    BullModule.registerQueue(
-      {
-        name: 'payment',
-        processors: [],
-      },
-      {
-        name: 'notification',
-        processors: [],
-      },
-      {
-        name: 'email',
-        processors: [],
-      },
-      {
-        name: 'fraud-check',
-        processors: [],
-      },
-      {
-        name: 'order-processing',
-        processors: [],
-      },
-      {
-        name: 'inventory',
-        processors: [],
-      },
-    ),
-    PrismaModule,
-    PagamentoModule,
-    NotificacoesModule,
-    MailModule,
-    ConfigModule,
-  ],
-  controllers: [QueueController],
-  providers: [
-    QueueService,
-    PaymentQueueProcessor,
-    NotificationQueueProcessor,
-    EmailQueueProcessor,
-    FraudCheckProcessor,
-    OrderProcessingProcessor,
-    InventoryProcessor,
-  ],
-  exports: [
-    QueueService,
-    BullModule, // Exportar BullModule para outros módulos usarem as filas
-  ],
-})
-export class QueueModule {}
+@Module({})
+export class QueueModule implements OnModuleInit {
+  private static instance: DynamicModule;
+
+  async onModuleInit() {
+    // Só carrega se REDIS_URL existir
+    if (process.env.REDIS_URL || process.env.REDIS_HOST) {
+      console.log('📦 Carregando módulo de filas (Bull)');
+      await import('@nestjs/bull');
+      await import('bull');
+    } else {
+      console.log('⚠️ Redis não configurado, módulo de filas desativado');
+    }
+  }
+
+  static forRoot(): DynamicModule {
+    if (this.instance) {
+      return this.instance;
+    }
+
+    // Verifica se Redis está configurado
+    const hasRedis = process.env.REDIS_URL || process.env.REDIS_HOST;
+    
+    if (!hasRedis) {
+      // Módulo vazio (sem filas)
+      return {
+        module: QueueModule,
+        providers: [],
+        exports: [],
+      };
+    }
+
+    // Importação dinâmica dos módulos Bull
+    const bullImports = [];
+    const bullProviders = [];
+
+    try {
+      // Tenta importar Bull (falha silenciosamente se não disponível)
+      const { BullModule } = require('@nestjs/bull');
+      
+      bullImports.push(
+        BullModule.registerQueue(
+          { name: 'payment' },
+          { name: 'notification' },
+          { name: 'email' },
+          { name: 'fraud-check' },
+          { name: 'order-processing' },
+          { name: 'inventory' },
+        )
+      );
+    } catch (error) {
+      console.log('Bull não disponível, executando sem filas');
+    }
+
+    this.instance = {
+      module: QueueModule,
+      imports: [
+        PrismaModule,
+        ConfigModule,
+        ...bullImports,
+      ],
+      controllers: [],
+      providers: bullProviders,
+      exports: [],
+    };
+
+    return this.instance;
+  }
+}

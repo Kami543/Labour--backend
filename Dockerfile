@@ -40,7 +40,7 @@ COPY --from=builder --chown=nestjs:nestjs /app/dist ./dist
 
 USER nestjs
 
-ENV NODE_OPTIONS="--max-old-space-size=380"
+ENV NODE_OPTIONS="--max-old-space-size=300 --optimize-for-size --compact --max-semi-space-size=64"
 ENV NODE_ENV=production
 ENV PORT=10000
 
