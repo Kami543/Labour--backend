@@ -1,42 +1,49 @@
+# ─────────────────────────────────────────
+# Stage 1: Builder
+# ─────────────────────────────────────────
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++ openssl openssl-dev
-
 COPY package*.json ./
-COPY prisma ./prisma/
 
-RUN npm install
-RUN npx prisma generate
+# Instala TUDO (dev + prod) para poder compilar e rodar prisma generate
+RUN npm ci --ignore-scripts
 
 COPY . .
 
+# Gerar client Prisma e compilar TypeScript
+RUN npx prisma generate
 RUN npm run build
-RUN npm prune --production
 
+# ─────────────────────────────────────────
+# Stage 2: Runner
+# ─────────────────────────────────────────
 FROM node:20-alpine AS runner
 
+RUN addgroup -S nestjs && adduser -S nestjs -G nestjs
 WORKDIR /app
 
-RUN apk add --no-cache openssl
+# Copiar package.json para instalar APENAS produção
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/prisma ./prisma
 
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nestjs -u 1001
+# npm ci --omit=dev instala só o que está em "dependencies", ignora "devDependencies"
+# Isso é o passo que corta lucide-react, typescript, prisma CLI, etc.
+RUN npm ci --omit=dev --ignore-scripts
 
-COPY --from=builder --chown=nestjs:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
-COPY --from=builder --chown=nestjs:nodejs /app/prisma ./prisma
-COPY --from=builder --chown=nestjs:nodejs /app/package*.json ./
-
+# Gerar Prisma Client no ambiente de runtime correto
 RUN npx prisma generate
+
+# Copiar o build compilado
+COPY --from=builder --chown=nestjs:nestjs /app/dist ./dist
 
 USER nestjs
 
-EXPOSE 3000
-
+ENV NODE_OPTIONS="--max-old-space-size=400"
 ENV NODE_ENV=production
-# ✅ REMOVIDO --optimize-for-size (não é uma flag válida)
-ENV NODE_OPTIONS="--max-old-space-size=1024"
+ENV PORT=10000
+
+EXPOSE 10000
 
 CMD ["node", "dist/main.js"]
