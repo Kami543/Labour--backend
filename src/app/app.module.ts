@@ -1,3 +1,4 @@
+// src/app/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
@@ -22,6 +23,7 @@ import appConfig from '../config/app.config';
 
 @Module({
   imports: [
+    // Configuração global
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env', '.env.prod', '.env.dev'],
@@ -30,6 +32,7 @@ import appConfig from '../config/app.config';
       expandVariables: true,
     }),
 
+    // Rate limiting
     ThrottlerModule.forRoot([
       {
         ttl: 60000,
@@ -37,164 +40,84 @@ import appConfig from '../config/app.config';
       },
     ]),
 
-    // 🔧 CONFIGURAÇÃO DO REDIS COM Bull
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        const isDevelopment = process.env.NODE_ENV === 'development';
-        const isProduction = process.env.NODE_ENV === 'production';
-        
-        return {
-          redis: {
-            host: configService.get<string>('redis.host', 'localhost'),
-            port: configService.get<number>('redis.port', 6379),
-            password: configService.get<string>('redis.password'),
-            db: configService.get<number>('redis.db', 0),
-            keyPrefix: configService.get<string>('redis.prefix', 'laboure:'),
-            
-            tls: isProduction ? {} : undefined,
-            enableOfflineQueue: true,
-            
-            retryStrategy: (times: number) => {
-              const maxRetries = isDevelopment ? 3 : 5;
+    // ⚠️ CONFIGURAÇÃO DO REDIS CONDICIONAL (apenas se necessário)
+    // Em produção, podemos desabilitar o Redis se não for essencial
+    ...(process.env.REDIS_HOST && process.env.REDIS_HOST !== 'localhost' 
+      ? [
+          BullModule.forRootAsync({
+            imports: [ConfigModule],
+            useFactory: (configService: ConfigService) => {
+              const isProduction = process.env.NODE_ENV === 'production';
               
-              if (times > maxRetries) {
-                console.error(`❌ Redis: desistindo de reconectar após ${times} tentativas`);
-                return null;
-              }
-              
-              const delay = Math.min(times * 200, 5000);
-              
-              if (isDevelopment && times > 1) {
-                console.log(`🔄 Redis: tentativa ${times} de reconexão em ${delay}ms`);
-              }
-              
-              return delay;
+              return {
+                redis: {
+                  host: configService.get<string>('redis.host', 'localhost'),
+                  port: configService.get<number>('redis.port', 6379),
+                  password: configService.get<string>('redis.password'),
+                  db: configService.get<number>('redis.db', 0),
+                  keyPrefix: configService.get<string>('redis.prefix', 'laboure:'),
+                  tls: isProduction ? { rejectUnauthorized: false } : undefined,
+                  connectTimeout: 15000,
+                  commandTimeout: 10000,
+                  retryStrategy: (times: number) => {
+                    if (times > 3) {
+                      console.warn(`⚠️ Redis: desistindo após ${times} tentativas`);
+                      return null;
+                    }
+                    return Math.min(times * 1000, 5000);
+                  },
+                },
+                defaultJobOptions: {
+                  attempts: isProduction ? 2 : 1,
+                  backoff: { type: 'exponential', delay: 1000 },
+                  removeOnComplete: 50,
+                  removeOnFail: 50,
+                  timeout: 15000,
+                },
+              };
             },
-            
-            connectTimeout: 10000,
-            commandTimeout: 5000,
-            keepAlive: 30000,
-            
-            reconnectOnError: (err: Error) => {
-              const targetErrors = ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT'];
-              const shouldReconnect = targetErrors.some(code => err.message.includes(code));
-              
-              if (shouldReconnect) {
-                console.warn(`🔄 Redis: ${err.message} - tentando reconectar`);
-                return true;
-              }
-              
-              return false;
-            },
-          },
+            inject: [ConfigService],
+          }),
           
-          defaultJobOptions: {
-            attempts: isDevelopment ? 1 : 3,
-            backoff: {
-              type: 'exponential',
-              delay: 1000,
-            },
-            removeOnComplete: 100,
-            removeOnFail: 200,
-            timeout: 30000,
-            stackTraceLimit: 10,
-          },
-          
-          settings: {
-            lockDuration: 30000,
-            stalledInterval: 30000,
-            maxStalledCount: 3,
-            guardInterval: 5000,
-            retryProcessDelay: 5000,
-          },
-        };
-      },
-      inject: [ConfigService],
-    }),
-
-    // 📋 REGISTRO DAS 6 FILAS
-    BullModule.registerQueue(
-      {
-        name: 'payment',
-        defaultJobOptions: {
-          priority: 1,
-          attempts: 5,
-          backoff: { type: 'exponential', delay: 5000 },
-          timeout: 30000,
-          removeOnComplete: 50,
-          removeOnFail: 100,
-        },
-      },
-      {
-        name: 'notification',
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: { type: 'fixed', delay: 2000 },
-          timeout: 10000,
-          removeOnComplete: 100,
-          removeOnFail: 100,
-        },
-      },
-      {
-        name: 'email',
-        defaultJobOptions: {
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 10000 },
-          timeout: 15000,
-          removeOnComplete: true,
-          removeOnFail: false,
-        },
-      },
-      {
-        name: 'fraud-check',
-        defaultJobOptions: {
-          priority: 2,
-          attempts: 2,
-          backoff: { type: 'fixed', delay: 3000 },
-          timeout: 15000,
-          removeOnComplete: 50,
-          removeOnFail: 50,
-        },
-      },
-      {
-        name: 'order-processing',
-        defaultJobOptions: {
-          priority: 1,
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-          timeout: 20000,
-          removeOnComplete: 50,
-          removeOnFail: 100,
-        },
-      },
-      {
-        name: 'inventory',
-        defaultJobOptions: {
-          priority: 2,
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 3000 },
-          timeout: 10000,
-          removeOnComplete: 50,
-          removeOnFail: 100,
-        },
-      },
-    ),
-
-    // MÓDULOS DA APLICAÇÃO
+          // Registrar filas apenas se Redis estiver disponível
+          BullModule.registerQueue(
+            { name: 'payment' },
+            { name: 'notification' },
+            { name: 'email' },
+          ),
+        ]
+      : []),
+    
+    // Módulos essenciais (sempre carregam)
     PrismaModule,
-    HealthModule,
-    QueueModule,
     AuthModule,
     UserModule,
     ProdutoModule,
     CartModule,
     PedidosModule,
-    AvaliacoesModule,
     NotificacoesModule,
     PagamentoModule,
     SupabaseModule,
     UploadModule,
+    
+    // Módulos opcionais (podem ser carregados condicionalmente)
+    ...(process.env.NODE_ENV !== 'production' ? [
+      HealthModule,
+      QueueModule,
+      AvaliacoesModule,
+    ] : []),
   ],
 })
-export class AppModule {}
+export class AppModule {
+  constructor() {
+    console.log(`📦 AppModule inicializado - Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    
+    if (!process.env.REDIS_HOST) {
+      console.log('⚠️ Redis não configurado - funcionalidades de fila desabilitadas');
+    }
+    
+    if (process.env.NODE_ENV === 'production') {
+      console.log('🚀 Modo produção: módulos não essenciais foram otimizados');
+    }
+  }
+}
