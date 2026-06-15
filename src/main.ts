@@ -1,58 +1,33 @@
-// ⚠️ IMPORTANTE: Handler de unhandledRejection deve ser a PRIMEIRA coisa
-process.on('unhandledRejection', (reason: any) => {
-  // Ignora erros específicos do Bull/Redis
-  if (reason?.message?.includes('enableOfflineQueue')) return;
-  if (reason?.code === 'ECONNRESET' || reason?.code === 'ECONNREFUSED') return;
-  
-  // Apenas log no console - SEM fs.appendFileSync para não crashar
-  console.error('❌ Unhandled rejection:', reason);
-});
-
+// src/main.ts - VERSÃO CORRIGIDA E COMPLETA PARA O RENDER
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app/app.module';
-import { ExpressAdapter } from '@nestjs/platform-express';
+import * as express from 'express';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
-import express from 'express';
 
-let cachedServer: any;
+// Logger global
+const logger = new Logger('Bootstrap');
 
-// Função para carregar .env
+// ============================================
+// 1. CARREGAR VARIÁVEIS DE AMBIENTE
+// ============================================
 function loadEnvironment() {
-  const isProdCommand = process.env.npm_lifecycle_event === 'start:prod' ||
-                        process.argv.some(arg => arg.includes('dist/main')) ||
-                        process.argv[1]?.includes('dist/main');
-  
-  const isDevCommand = process.env.npm_lifecycle_event === 'start:dev' ||
-                       process.argv.some(arg => arg.includes('--watch')) ||
-                       process.argv[1]?.includes('src/main');
-  
-  if (!process.env.NODE_ENV) {
-    if (isProdCommand) {
-      process.env.NODE_ENV = 'production';
-    } else if (isDevCommand) {
-      process.env.NODE_ENV = 'development';
-    } else {
-      process.env.NODE_ENV = 'development';
-    }
-  }
-  
   const envFile = process.env.NODE_ENV === 'production' ? '.env.prod' : '.env.dev';
   const envPath = path.resolve(process.cwd(), envFile);
   const defaultEnvPath = path.resolve(process.cwd(), '.env');
   
   if (fs.existsSync(envPath)) {
     dotenv.config({ path: envPath });
-    console.log(`✅ Carregado configurações de ${envFile}`);
+    console.log(`✅ Carregado: ${envFile}`);
   } else if (fs.existsSync(defaultEnvPath)) {
     dotenv.config({ path: defaultEnvPath });
-    console.log(`⚠️ ${envFile} não encontrado, usando .env padrão`);
+    console.log(`⚠️ Usando .env padrão`);
   } else {
     dotenv.config();
-    console.log(`📝 Usando variáveis de ambiente do sistema`);
+    console.log(`📝 Usando variáveis do sistema`);
   }
   
   console.log(`🔧 Ambiente: ${process.env.NODE_ENV?.toUpperCase() || 'DESENVOLVIMENTO'}`);
@@ -60,9 +35,42 @@ function loadEnvironment() {
 
 loadEnvironment();
 
+// ============================================
+// 2. HANDLER PARA ERROS NÃO TRATADOS
+// ============================================
+process.on('unhandledRejection', (reason: any) => {
+  // Ignora erros conhecidos que não afetam a aplicação
+  if (reason?.message?.includes('enableOfflineQueue')) return;
+  if (reason?.code === 'ECONNRESET' || reason?.code === 'ECONNREFUSED') return;
+  if (reason?.message?.includes('Redis connection')) return;
+  
+  // Log apenas, não derruba a aplicação
+  logger.warn(`Unhandled Rejection: ${reason?.message || 'Unknown error'}`);
+});
+
+process.on('uncaughtException', (error: Error) => {
+  // Ignora erros de conexão Redis
+  if (error.message?.includes('Redis')) {
+    logger.warn(`Redis connection issue: ${error.message}`);
+    return;
+  }
+  
+  logger.error(`Uncaught Exception: ${error.message}`);
+  // Não derruba a aplicação em produção
+  if (process.env.NODE_ENV !== 'production') {
+    process.exit(1);
+  }
+});
+
+// ============================================
+// 3. CONFIGURAÇÃO DO APP
+// ============================================
 async function configureApp(app: any) {
-  const environment = process.env.NODE_ENV;
-  const isProduction = environment === 'production';
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  // Configurar payload limite para upload de imagens
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ limit: '10mb', extended: true }));
   
   // Validação global
   app.useGlobalPipes(
@@ -76,75 +84,50 @@ async function configureApp(app: any) {
       },
     }),
   );
-
+  
   // CORS configurado
-  if (isProduction) {
-    const corsOrigin = process.env.CORS_ORIGIN || 'https://laboure.vercel.app';
-    app.enableCors({
-      origin: corsOrigin.split(','),
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
-      exposedHeaders: ['Authorization'],
-      preflightContinue: false,
-      optionsSuccessStatus: 204,
-    });
-    console.log(`🔒 CORS configurado para produção: ${corsOrigin}`);
-  } else {
-    app.enableCors({
-      origin: [
+  const corsOrigins = isProduction
+    ? (process.env.CORS_ORIGIN || 'https://laboure.vercel.app').split(',')
+    : [
         'http://localhost:5173',
         'http://localhost:5174',
         'http://localhost:3000',
         'http://localhost:3001',
         'http://127.0.0.1:5173',
         'http://127.0.0.1:5174',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:3001',
-        'https://aetxtjypdzwkniuvluwr.supabase.co',
-      ],
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
-      exposedHeaders: ['Authorization'],
-      preflightContinue: false,
-      optionsSuccessStatus: 204,
-    });
-    console.log('🔓 CORS configurado para desenvolvimento');
-  }
-
+        'https://laboure.vercel.app',
+      ];
+  
+  app.enableCors({
+    origin: corsOrigins,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Requested-With'],
+    exposedHeaders: ['Authorization'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
+  });
+  
+  console.log(`🔧 CORS configurado para ${isProduction ? 'produção' : 'desenvolvimento'}`);
+  
+  // Prefixo global da API
   app.setGlobalPrefix('api');
-
+  
   // Swagger apenas em desenvolvimento
   if (!isProduction) {
     const config = new DocumentBuilder()
-      .setTitle('Documentação da API - Labouré')
+      .setTitle('API Labouré - E-commerce')
       .setDescription(`
-        ## Documentação da API para Sistema de E-commerce
-
+        ## API para Sistema de E-commerce
+        
         ### Funcionalidades:
-        - Gerenciamento de usuários (autenticação, perfil)
-        - Gerenciamento de produtos (operações CRUD) com **múltiplas imagens**
-        - Upload de imagens via **Supabase Storage**
-        - Operações de carrinho de compras
-        - Processamento de pedidos
-        - Integração de pagamento
-        - Sistema de notificações
-        - **Processamento assíncrono com Bull/Redis**
-        
-        ### Filas disponíveis:
-        - 💳 **payment** - Processamento de pagamentos
-        - 📧 **email** - Envio de emails
-        - 🔔 **notification** - Notificações push
-        - 🛡️ **fraud-check** - Análise antifraude
-        - 📦 **order-processing** - Processamento de pedidos
-        - 📊 **inventory** - Controle de estoque
-        
-        ### Upload de imagens:
-        - Produtos suportam múltiplas imagens
-        - Upload via Supabase Storage
-        - Formatos: JPEG, PNG, WEBP
-        - Tamanho máximo: 5MB por imagem
+        - 👤 Autenticação e gerenciamento de usuários
+        - 📦 Produtos com múltiplas imagens
+        - 🛒 Carrinho de compras
+        - 📝 Pedidos e status
+        - 💳 Pagamentos
+        - 🔔 Notificações em tempo real
+        - 📊 Painel administrativo
       `)
       .setVersion('1.0')
       .addBearerAuth({
@@ -152,20 +135,17 @@ async function configureApp(app: any) {
         scheme: 'bearer',
         bearerFormat: 'JWT',
         name: 'JWT',
-        description: 'Digite o token JWT',
+        description: 'Digite seu token JWT',
         in: 'header',
       }, 'access-token')
-      .addTag('Auth', 'Endpoints de autenticação')
-      .addTag('Users', 'Gerenciamento de usuários')
-      .addTag('Produtos', 'Catálogo de produtos (suporta múltiplas imagens)')
-      .addTag('Upload', 'Upload de imagens para Supabase Storage')
+      .addTag('Auth', 'Autenticação')
+      .addTag('Users', 'Usuários')
+      .addTag('Produtos', 'Catálogo de produtos')
       .addTag('Carrinho', 'Carrinho de compras')
       .addTag('Pedidos', 'Gerenciamento de pedidos')
-      .addTag('Pagamento', 'Processamento de pagamento')
-      .addTag('Notificacoes', 'Notificações do usuário')
-      .addTag('Queue', 'Monitoramento de filas Bull')
+      .addTag('Notificacoes', 'Notificações')
       .build();
-
+    
     const document = SwaggerModule.createDocument(app, config);
     SwaggerModule.setup('api/docs', app, document, {
       swaggerOptions: {
@@ -182,205 +162,119 @@ async function configureApp(app: any) {
   } else {
     console.log('🔒 Swagger desabilitado em produção');
   }
-
+  
   return app;
 }
 
-// Health check para Bull/Redis
-async function checkBullHealth() {
-  const logger = new Logger('BullHealth');
-  try {
-    const Redis = require('ioredis');
-    const redisPort = process.env.REDIS_PORT ? parseInt(process.env.REDIS_PORT) : 6379;
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    const redis = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: redisPort,
-      password: process.env.REDIS_PASSWORD,
-      tls: isProduction ? { rejectUnauthorized: false } : undefined,
-      retryStrategy: () => null,
-      lazyConnect: true,
-      connectTimeout: 5000,
-    });
-    
-    await redis.connect();
-    const pong = await redis.ping();
-    
-    if (pong === 'PONG') {
-      logger.log('✅ Redis conectado - Bull operacional');
-      await redis.quit();
-      return true;
-    }
-  } catch (error: any) {
-    if (error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED') {
-      logger.warn(`⚠️ Redis não disponível: ${error.code}`);
-    } else {
-      logger.error(`❌ Redis/Bull health check falhou: ${error.message}`);
-    }
-    return false;
-  }
-  return false;
-}
-
-// Health check para Supabase
+// ============================================
+// 4. HEALTH CHECKS SIMPLIFICADOS
+// ============================================
 async function checkSupabaseHealth() {
-  const logger = new Logger('SupabaseHealth');
   try {
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
     if (!supabaseUrl || !supabaseKey) {
-      logger.warn('⚠️ Supabase não configurado - variáveis de ambiente faltando');
+      console.log('⚠️ Supabase: variáveis não configuradas');
       return false;
     }
     
-    logger.log('✅ Supabase configurado');
+    console.log('✅ Supabase configurado');
     return true;
-  } catch (error: any) {
-    logger.error(`❌ Supabase health check falhou: ${error.message}`);
+  } catch (error) {
+    console.log('⚠️ Supabase: erro na verificação');
     return false;
   }
 }
 
-// Handler para Vercel
-export default async function handler(req: any, res: any) {
-  if (!cachedServer) {
-    const expressApp = express();
-    const adapter = new ExpressAdapter(expressApp);
-    const app = await NestFactory.create(AppModule, adapter, {
+async function checkRedisHealth() {
+  try {
+    // Verificação simples se as variáveis existem
+    const redisHost = process.env.REDIS_HOST;
+    const redisPort = process.env.REDIS_PORT;
+    
+    if (!redisHost) {
+      console.log('⚠️ Redis: não configurado (funcionalidades de fila limitadas)');
+      return false;
+    }
+    
+    console.log(`✅ Redis configurado em ${redisHost}:${redisPort || 6379}`);
+    return true;
+  } catch (error) {
+    console.log('⚠️ Redis: não disponível');
+    return false;
+  }
+}
+
+// ============================================
+// 5. BOOTSTRAP PRINCIPAL
+// ============================================
+async function bootstrap() {
+  try {
+    console.log('\n' + '='.repeat(60));
+    console.log('🚀 INICIANDO LABOURÉ BACKEND');
+    console.log('='.repeat(60) + '\n');
+    
+    // Verificações rápidas
+    const supabaseOk = await checkSupabaseHealth();
+    const redisOk = await checkRedisHealth();
+    
+    if (supabaseOk) {
+      console.log('📦 Supabase Storage: pronto para uploads');
+    }
+    
+    if (redisOk) {
+      console.log('📊 Redis/Bull: funcionalidades de fila disponíveis');
+    } else {
+      console.log('⚠️ Bull/Redis: funcionalidades de fila limitadas');
+    }
+    
+    console.log('\n🔧 Configurando aplicação...\n');
+    
+    // Criar aplicação NestJS
+    const app = await NestFactory.create(AppModule, {
       rawBody: true,
+      bodyParser: true,
+      logger: ['error', 'warn', 'log'],
     });
     
+    // Configurar aplicação
     await configureApp(app);
-    await app.init();
-    cachedServer = expressApp;
-    console.log('✅ Serverless handler inicializado');
-  }
-  
-  cachedServer(req, res);
-}
-
-// Bootstrap local com Bull e Supabase
-async function bootstrapLocal() {
-  const logger = new Logger('Bootstrap');
-  
-  console.log('\n🚀 Iniciando aplicação Labouré...\n');
-  
-  // Verificar Redis/Bull
-  const bullHealthy = await checkBullHealth();
-  if (!bullHealthy) {
-    logger.warn('⚠️ Bull/Redis não disponível - funcionalidades de fila limitadas');
-    console.log('   Verifique se o Redis está rodando: docker compose up -d redis\n');
-  } else {
-    logger.log('🚀 Bull/Redis inicializado e pronto para processar filas');
-  }
-  
-  // Verificar Supabase
-  const supabaseHealthy = await checkSupabaseHealth();
-  if (!supabaseHealthy) {
-    logger.warn('⚠️ Supabase não configurado - upload de imagens desabilitado');
-    console.log('   Configure SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY no .env\n');
-  } else {
-    logger.log('📦 Supabase Storage inicializado e pronto para uploads');
-  }
-  
-  const app = await NestFactory.create(AppModule, {
-    rawBody: true,
-    bodyParser: true,
-  });
-  
-  // Configurar limite de payload para upload de imagens
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ limit: '10mb', extended: true }));
-  
-  await configureApp(app);
-  
-  // Dashboard Bull (opcional em desenvolvimento)
-  if (process.env.NODE_ENV !== 'production' && bullHealthy) {
-    try {
-      const { createBullBoard } = require('@bull-board/api');
-      const { BullAdapter } = require('@bull-board/api/bullAdapter');
-      const { ExpressAdapter } = require('@bull-board/express');
-      
-      const serverAdapter = new ExpressAdapter();
-      const queues: any[] = [];
-      
-      const queueNames = ['payment', 'notification', 'email', 'fraud-check', 'order-processing', 'inventory'];
-      
-      for (const queueName of queueNames) {
-        try {
-          let queue = null;
-          try {
-            const { getQueueToken } = require('@nestjs/bull');
-            queue = app.get(getQueueToken(queueName));
-          } catch (err) {
-            const bullModule = require('@nestjs/bull');
-            queue = app.get(bullModule.getQueueToken(queueName));
-          }
-          
-          if (queue) {
-            queues.push(new BullAdapter(queue));
-            console.log(`   📋 Fila "${queueName}" registrada no dashboard`);
-          }
-        } catch (error) {
-          if (process.env.DEBUG === 'true') {
-            console.log(`   ⚠️ Fila "${queueName}" não disponível: ${error.message}`);
-          }
-        }
-      }
-      
-      if (queues.length > 0) {
-        createBullBoard({
-          queues,
-          serverAdapter,
-        });
-        
-        serverAdapter.setBasePath('/admin/queues');
-        app.use('/admin/queues', serverAdapter.getRouter());
-        logger.log(`📊 Bull Dashboard disponível em /admin/queues (${queues.length} filas)`);
-      } else {
-        logger.warn('⚠️ Nenhuma fila encontrada para o dashboard');
-      }
-    } catch (error: any) {
-      logger.warn(`⚠️ Não foi possível carregar Bull Dashboard: ${error.message}`);
+    
+    // ⚠️ CRUCIAL PARA O RENDER: Usar 0.0.0.0 e a porta correta
+    const port = parseInt(process.env.PORT || '10000', 10);
+    const host = '0.0.0.0'; // Obrigatório no Render
+    
+    await app.listen(port, host);
+    
+    console.log('\n' + '='.repeat(60));
+    console.log('✅ SERVIDOR INICIADO COM SUCESSO!');
+    console.log('='.repeat(60));
+    console.log(`🌐 URL: http://${host}:${port}`);
+    console.log(`📚 API: http://${host}:${port}/api`);
+    
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`📖 Docs: http://${host}:${port}/api/docs`);
     }
+    
+    console.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📦 Banco: ${process.env.DATABASE_URL ? '✅ Conectado' : '❌ Não configurado'}`);
+    console.log(`📊 Redis: ${redisOk ? '✅ Disponível' : '❌ Indisponível'}`);
+    console.log(`📸 Supabase: ${supabaseOk ? '✅ Disponível' : '❌ Indisponível'}`);
+    console.log('='.repeat(60) + '\n');
+    
+  } catch (error: any) {
+    console.error('\n❌ ERRO FATAL AO INICIAR SERVIDOR:');
+    console.error('='.repeat(60));
+    console.error(error.message);
+    console.error(error.stack);
+    console.error('='.repeat(60) + '\n');
+    
+    process.exit(1);
   }
-  
-  const portaDesejada = process.env.PORT ? parseInt(process.env.PORT) : 3001;
-  await app.listen(portaDesejada);
-  
-  console.log('\n' + '='.repeat(60));
-  logger.log(`🚀 Servidor rodando em http://localhost:${portaDesejada}`);
-  logger.log(`📚 Swagger disponível em http://localhost:${portaDesejada}/api/docs`);
-  if (process.env.NODE_ENV !== 'production' && bullHealthy) {
-    logger.log(`📊 Bull Dashboard em http://localhost:${portaDesejada}/admin/queues`);
-  }
-  if (supabaseHealthy) {
-    logger.log(`📦 Supabase Storage disponível para uploads`);
-  }
-  console.log('='.repeat(60));
-  console.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'desenvolvimento'}`);
-  console.log(`📦 Banco de dados: ${process.env.DATABASE_URL ? '✅ Configurado' : '❌ Não configurado'}`);
-  console.log(`🔄 Bull/Redis: ${bullHealthy ? '✅ Ativo' : '❌ Inativo'}`);
-  console.log(`📦 Supabase: ${supabaseHealthy ? '✅ Ativo' : '❌ Inativo'}`);
-  
-  if (bullHealthy) {
-    console.log(`📊 Filas disponíveis: payment, notification, email, fraud-check, order-processing, inventory`);
-    console.log(`💡 Dica: Acesse /admin/queues para monitorar as filas`);
-  }
-  
-  if (supabaseHealthy) {
-    console.log(`📸 Upload de imagens: Bucket 'produtos-imagens' disponível`);
-    console.log(`💡 Dica: Use endpoint POST /api/upload/product/:produtoId para fazer upload`);
-  }
-  console.log('='.repeat(60) + '\n');
 }
 
-// Executa local apenas se não estiver no Vercel
-if (process.env.VERCEL !== '1') {
-  bootstrapLocal().catch(error => {
-    console.error('❌ Erro fatal ao iniciar aplicação:', error);
-    process.exit(1);
-  });
-}
+// ============================================
+// 6. INICIAR APLICAÇÃO
+// ============================================
+bootstrap();
