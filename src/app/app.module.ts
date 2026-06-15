@@ -1,6 +1,6 @@
 // src/app/app.module.ts
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigModule } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { ThrottlerModule } from '@nestjs/throttler';
 
@@ -21,9 +21,51 @@ import { UploadModule } from '../upload/upload.module';
 import redisConfig from '../config/redis.config';
 import appConfig from '../config/app.config';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Upstash fornece REDIS_URL no formato rediss://... — usar URL direta é mais estável
+// do que host/port + TLS manual, e não trava o bootstrap.
+const redisUrl = process.env.REDIS_URL; // rediss://:<password>@host:port
+const hasRedis = !!redisUrl || (!!process.env.REDIS_HOST && process.env.REDIS_HOST !== 'localhost');
+
+const bullModules = hasRedis
+  ? [
+      BullModule.forRoot({
+        url: redisUrl,                    // Upstash: usa URL direta (já inclui TLS)
+        ...(!redisUrl && {               // Fallback host/port para Redis local/outro
+          redis: {
+            host: process.env.REDIS_HOST,
+            port: parseInt(process.env.REDIS_PORT || '6379'),
+            password: process.env.REDIS_PASSWORD,
+            tls: isProduction ? {} : undefined,
+            enableOfflineQueue: false,   // ← não acumula comandos se Redis cair
+            lazyConnect: true,           // ← conecta na primeira chamada, não no boot
+            connectTimeout: 8000,
+            maxRetriesPerRequest: 1,
+            retryStrategy: (times: number) => {
+              if (times > 2) return null; // desiste rápido — não trava o processo
+              return times * 500;
+            },
+          },
+        }),
+        defaultJobOptions: {
+          attempts: 2,
+          backoff: { type: 'exponential', delay: 1000 },
+          removeOnComplete: 50,
+          removeOnFail: 50,
+          timeout: 15000,
+        },
+      }),
+      BullModule.registerQueue(
+        { name: 'payment' },
+        { name: 'notification' },
+        { name: 'email' },
+      ),
+    ]
+  : [];
+
 @Module({
   imports: [
-    // Configuração global
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env', '.env.prod', '.env.dev'],
@@ -32,63 +74,11 @@ import appConfig from '../config/app.config';
       expandVariables: true,
     }),
 
-    // Rate limiting
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60000,
-        limit: 100,
-      },
-    ]),
+    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
 
-    // ⚠️ CONFIGURAÇÃO DO REDIS CONDICIONAL (apenas se necessário)
-    // Em produção, podemos desabilitar o Redis se não for essencial
-    ...(process.env.REDIS_HOST && process.env.REDIS_HOST !== 'localhost' 
-      ? [
-          BullModule.forRootAsync({
-            imports: [ConfigModule],
-            useFactory: (configService: ConfigService) => {
-              const isProduction = process.env.NODE_ENV === 'production';
-              
-              return {
-                redis: {
-                  host: configService.get<string>('redis.host', 'localhost'),
-                  port: configService.get<number>('redis.port', 6379),
-                  password: configService.get<string>('redis.password'),
-                  db: configService.get<number>('redis.db', 0),
-                  keyPrefix: configService.get<string>('redis.prefix', 'laboure:'),
-                  tls: isProduction ? { rejectUnauthorized: false } : undefined,
-                  connectTimeout: 15000,
-                  commandTimeout: 10000,
-                  retryStrategy: (times: number) => {
-                    if (times > 3) {
-                      console.warn(`⚠️ Redis: desistindo após ${times} tentativas`);
-                      return null;
-                    }
-                    return Math.min(times * 1000, 5000);
-                  },
-                },
-                defaultJobOptions: {
-                  attempts: isProduction ? 2 : 1,
-                  backoff: { type: 'exponential', delay: 1000 },
-                  removeOnComplete: 50,
-                  removeOnFail: 50,
-                  timeout: 15000,
-                },
-              };
-            },
-            inject: [ConfigService],
-          }),
-          
-          // Registrar filas apenas se Redis estiver disponível
-          BullModule.registerQueue(
-            { name: 'payment' },
-            { name: 'notification' },
-            { name: 'email' },
-          ),
-        ]
-      : []),
-    
-    // Módulos essenciais (sempre carregam)
+    ...bullModules,
+
+    // ── Módulos essenciais ──
     PrismaModule,
     AuthModule,
     UserModule,
@@ -96,28 +86,23 @@ import appConfig from '../config/app.config';
     CartModule,
     PedidosModule,
     NotificacoesModule,
-    PagamentoModule,
     SupabaseModule,
     UploadModule,
-    
-    // Módulos opcionais (podem ser carregados condicionalmente)
-    ...(process.env.NODE_ENV !== 'production' ? [
-      HealthModule,
-      QueueModule,
-      AvaliacoesModule,
-    ] : []),
+    AvaliacoesModule,
+
+    // ── PagamentoModule só sobe se Redis estiver disponível
+    //    (depende de filas Bull internamente)
+    ...(hasRedis ? [PagamentoModule, QueueModule] : []),
+
+    // ── Só em dev ──
+    ...(!isProduction ? [HealthModule] : []),
   ],
 })
 export class AppModule {
   constructor() {
-    console.log(`📦 AppModule inicializado - Ambiente: ${process.env.NODE_ENV || 'development'}`);
-    
-    if (!process.env.REDIS_HOST) {
-      console.log('⚠️ Redis não configurado - funcionalidades de fila desabilitadas');
-    }
-    
-    if (process.env.NODE_ENV === 'production') {
-      console.log('🚀 Modo produção: módulos não essenciais foram otimizados');
-    }
+    const env = process.env.NODE_ENV || 'development';
+    console.log(`📦 AppModule inicializado — ${env}`);
+    if (!hasRedis) console.log('⚠️  Redis não detectado — filas e pagamento desabilitados');
+    if (isProduction) console.log('🚀 Modo produção');
   }
 }
