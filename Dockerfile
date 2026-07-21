@@ -1,48 +1,55 @@
-# ─────────────────────────────────────────
-# Stage 1: Builder
-# ─────────────────────────────────────────
+# Dockerfile - UNIFICADO
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
+# Instalar dependências de build
+RUN apk add --no-cache python3 make g++ openssl
 
-# Instala TUDO (incluindo dev deps)
+# Copiar arquivos
+COPY package*.json ./
+COPY prisma ./prisma/
+COPY nest-cli.json ./
+COPY tsconfig*.json ./
+
 RUN npm ci
 
-# Se ainda faltar tipos específicos, instala eles explicitamente
-RUN npm install --save-dev @types/multer @types/express
+COPY src ./src
 
-COPY . .
+# Gerar Prisma Client
 RUN npx prisma generate
+
+# Build
 RUN npm run build
 
-# ─────────────────────────────────────────
-# Stage 2: Runner
-# ─────────────────────────────────────────
+# Verificar build
+RUN if [ ! -d "/app/dist" ]; then \
+    echo "❌ Build falhou"; \
+    exit 1; \
+fi
+
+# ============================================
 FROM node:20-alpine AS runner
 
 RUN addgroup -S nestjs && adduser -S nestjs -G nestjs
+
 WORKDIR /app
 
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/prisma ./prisma
-
-# Instalar SÓ produção
-RUN npm ci --omit=dev --ignore-scripts
-
-# Copiar Prisma Client do builder
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-
-# Copiar o build
+# Copiar dependências
+COPY --from=builder --chown=nestjs:nestjs /app/package*.json ./
+COPY --from=builder --chown=nestjs:nestjs /app/node_modules ./node_modules
 COPY --from=builder --chown=nestjs:nestjs /app/dist ./dist
+COPY --from=builder --chown=nestjs:nestjs /app/prisma ./prisma
 
 USER nestjs
 
-ENV NODE_OPTIONS="--max-old-space-size=300 --optimize-for-size --compact --max-semi-space-size=64"
 ENV NODE_ENV=production
 ENV PORT=10000
 
 EXPOSE 10000
+
+# Para Web Service
 CMD ["node", "dist/main.js"]
+
+# Para Worker (descomente se for worker)
+# CMD ["node", "dist/worker.js"]
