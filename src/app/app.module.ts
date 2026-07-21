@@ -1,4 +1,4 @@
-// app.module.ts - versão com debug detalhado
+// app.module.ts - VERSÃO CORRIGIDA
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
@@ -75,6 +75,10 @@ const getBullConfig = () => {
 };
 
 const bullConfig = getBullConfig();
+
+// ⭐ CORREÇÃO: Só configura o Bull UMA VEZ
+// Se tem Redis, configura o BullModule e registra as filas
+// Se não tem Redis, não faz nada (e não importa o QueueModule)
 const bullModules = bullConfig
   ? [
       BullModule.forRoot(bullConfig),
@@ -82,6 +86,9 @@ const bullModules = bullConfig
         { name: 'payment' },
         { name: 'notification' },
         { name: 'email' },
+        { name: 'fraud-check' },
+        { name: 'order-processing' },
+        { name: 'inventory' },
       ),
     ]
   : [];
@@ -107,6 +114,7 @@ const debugModule = (name: string, module: any) => {
     debugModule('ThrottlerModule', ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }])),
 
     // ─── Redis/Bull ──────────────────────────────────────────
+    // ⭐ CORREÇÃO: BullModule configurado AQUI, não no QueueModule
     ...bullModules,
 
     // ─── TODOS OS MÓDULOS ──────────────────────────────────
@@ -123,9 +131,15 @@ const debugModule = (name: string, module: any) => {
     debugModule('MailModule', MailModule),
 
     // ─── Módulos que dependem de Redis ──────────────────────
+    // ⭐ CORREÇÃO: QueueModule NÃO é importado aqui se já configuramos Bull acima
+    // Só importa o QueueModule se NÃO tiver configurado o Bull diretamente
+    ...(hasRedis && bullModules.length === 0 ? [
+      debugModule('QueueModule', QueueModule.forRoot()),
+    ] : []),
+
+    // ─── PagamentoModule (depende de Redis mas usa QueueModule) ──
     ...(hasRedis ? [
       debugModule('PagamentoModule', PagamentoModule),
-      debugModule('QueueModule', QueueModule),
     ] : []),
 
     // ─── Apenas em desenvolvimento ──────────────────────────
@@ -137,5 +151,7 @@ const debugModule = (name: string, module: any) => {
 export class AppModule {
   constructor() {
     console.log('✅ AppModule.constructor() executado');
+    console.log(`📦 Redis configurado: ${hasRedis ? '✅' : '❌'}`);
+    console.log(`📦 Bull configurado: ${bullModules.length > 0 ? '✅' : '❌'}`);
   }
 }
