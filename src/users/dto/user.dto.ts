@@ -37,8 +37,6 @@ export class CreateUserDto {
   email: string;
 
   @IsString({ message: 'CPF deve ser uma string' })
-  // Opcional: adicionar validação de formato de CPF
-  // @Matches(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, { message: 'CPF deve estar no formato 000.000.000-00' })
   cpf: string;
 
   @IsString({ message: 'Senha deve ser uma string' })
@@ -85,6 +83,10 @@ export class UpdateUserDto {
   role?: UserRole;
 }
 
+// ============================================
+// ⭐ NOVAS CLASSES ADICIONADAS ABAIXO ⭐
+// ============================================
+
 // DTO de resposta básica (sem estatísticas)
 export class UserResponseDto {
   id: string;
@@ -92,7 +94,7 @@ export class UserResponseDto {
   email: string;
   cpf: string;
   role: UserRole;
-  endereco: EnderecoDto;  // 👈 objeto estruturado
+  endereco: EnderecoDto;
   createdAt: Date;
   updatedAt: Date;
 

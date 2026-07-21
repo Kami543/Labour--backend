@@ -54,18 +54,15 @@ async function bootstrap() {
 
     const isProduction = process.env.NODE_ENV === 'production';
 
-    // ── Criar app com logger mínimo em produção ──
     const app = await NestFactory.create(AppModule, {
       rawBody: true,
       bodyParser: true,
       logger: isProduction ? ['error', 'warn'] : ['error', 'warn', 'log'],
     });
 
-    // ── Payload ──
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-    // ── Validação ──
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -76,7 +73,6 @@ async function bootstrap() {
       }),
     );
 
-    // ── CORS ──
     const corsOrigins = isProduction
       ? (process.env.CORS_ORIGIN || 'https://laboure.vercel.app').split(',')
       : [
@@ -96,31 +92,44 @@ async function bootstrap() {
       optionsSuccessStatus: 204,
     });
 
-    // ── Prefixo ──
     app.setGlobalPrefix('api/v1');
 
-    // ── Swagger só em dev ──
     if (!isProduction) {
       const config = new DocumentBuilder()
         .setTitle('API Labouré')
+        .setDescription('API para Sistema de E-commerce Labouré')
         .setVersion('1.0')
         .addBearerAuth(
           { type: 'http', scheme: 'bearer', bearerFormat: 'JWT', in: 'header' },
           'access-token',
         )
+        .addTag('Auth', 'Autenticação')
+        .addTag('Users', 'Usuários')
+        .addTag('Produtos', 'Catálogo de produtos')
+        .addTag('Carrinho', 'Carrinho de compras')
+        .addTag('Pedidos', 'Gerenciamento de pedidos')
+        .addTag('Notificacoes', 'Notificações')
         .build();
+
       const document = SwaggerModule.createDocument(app, config);
-      SwaggerModule.setup('api/v1/docs', app, document);
+      SwaggerModule.setup('api/v1/docs', app, document, {
+        swaggerOptions: {
+          persistAuthorization: true,
+          docExpansion: 'none',
+          filter: true,
+        },
+      });
+
       console.log('📚 Swagger disponível em /api/v1/docs');
     }
 
-    // ── Listen ──
     const port = parseInt(process.env.PORT || '10000', 10);
     await app.listen(port, '0.0.0.0');
 
     console.log('='.repeat(60));
-    console.log(`✅ Servidor na porta ${port}`);
+    console.log(`✅ Servidor iniciado na porta ${port}`);
     console.log(`🔧 Ambiente: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📦 Banco: ${process.env.DATABASE_URL ? '✅ Configurado' : '❌ Não configurado'}`);
     console.log('='.repeat(60) + '\n');
 
   } catch (error: any) {
