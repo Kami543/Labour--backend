@@ -1,4 +1,4 @@
-# Dockerfile
+# Dockerfile - SEM .env (RECOMENDADO PARA RENDER)
 FROM node:20-alpine AS builder
 
 WORKDIR /app
@@ -22,8 +22,6 @@ RUN if [ ! -d "/app/dist" ]; then \
     exit 1; \
 fi
 
-RUN echo "✅ Build criado com sucesso!" && ls -la /app/dist/
-
 # ============================================
 FROM node:20-alpine AS runner
 
@@ -36,14 +34,6 @@ COPY --from=builder --chown=nestjs:nestjs /app/node_modules ./node_modules
 COPY --from=builder --chown=nestjs:nestjs /app/dist ./dist
 COPY --from=builder --chown=nestjs:nestjs /app/prisma ./prisma
 
-# Copiar arquivos .env se existirem
-COPY .env* ./.env 2>/dev/null || true
-
-# Verificar arquivos
-RUN echo "📂 Verificando arquivos:" && ls -la /app/
-RUN echo "📂 Verificando dist:" && ls -la /app/dist/
-RUN echo "📂 Verificando main.js:" && ls -la /app/dist/main.js || echo "❌ main.js não encontrado!"
-
 USER nestjs
 
 ENV NODE_ENV=production
@@ -51,5 +41,4 @@ ENV PORT=10000
 
 EXPOSE 10000
 
-# Comando com verificação
-CMD ["sh", "-c", "echo '🚀 Iniciando...' && node dist/main.js"]
+CMD ["node", "dist/main.js"]
