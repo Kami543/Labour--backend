@@ -111,26 +111,26 @@ model User {
 // ──────────────────────────────────────
 
 model Produto {
-  id            String           @id @default(uuid())
-  nome          String
-  slug          String?          @unique
-  descricao     String?
-  preco         Decimal          @db.Decimal(10, 2)
-  categoria     String           // Agora é String (ex: "Sapatos", "Bolsas", "Roupas", "Acessorios")
-  tag           String?
-  estoque       Int              @default(0)
-  
-  cores         Json             @default("[]")
-  tamanhos      Json             @default("[]")
-  
-  // Relacionamentos
-  cartItems     CartItem[]
-  pedidoItens   PedidoItem[]
-  avaliacoes    Avaliacao[]
-  imagens       ProdutoImagem[]  // <- NOVO: Múltiplas imagens
-  
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  id                String           @id @default(uuid())
+  nome              String
+  slug              String?          @unique
+  descricao         String?
+  preco             Decimal          @db.Decimal(10, 2)
+  precoPromocional  Decimal?         @db.Decimal(10, 2)   // ← NOVO
+  desconto          Int?             @default(0)          // ← NOVO
+  promocaoAtiva     Boolean          @default(false)       // ← NOVO
+  categoria         String
+  tag               String?
+  estoque           Int              @default(0)
+  cores             Json             @default("[]")
+  tamanhos          Json             @default("[]")
+  cartItems         CartItem[]
+  pedidoItens       PedidoItem[]
+  avaliacoes        Avaliacao[]
+  imagens           ProdutoImagem[]
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  deletedAt         DateTime?
 
   @@index([categoria])
   @@index([tag])

@@ -1,4 +1,4 @@
-// src/produto/produto.service.ts - VERSÃO COMPLETA CORRIGIDA
+// src/produto/produto.service.ts - VERSÃO COMPLETA CORRIGIDA COM PROMOÇÃO
 import { Injectable, Logger, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { ProdutoRepository } from './produto.repository';
 import { 
@@ -7,7 +7,11 @@ import {
   ProdutoResponseDto, 
   ProdutoDetailResponseDto, 
   CreateProdutoImagemDto, 
-  ProdutoImagemResponseDto 
+  ProdutoImagemResponseDto,
+  FilterProdutoDto,
+  UpdatePromocaoDto,
+  PromocaoProdutoDto,
+  BulkUpdateResponseDto
 } from './dto/produto.dto';
 import { slugify } from '../common/utils/slugify';
 import { PrismaService } from '../prisma/prisma.service';
@@ -53,6 +57,10 @@ export class ProdutoService {
       estoque: Math.max(0, createProdutoDto.estoque || 0),
       cores: JSON.stringify(createProdutoDto.cores || []),
       tamanhos: JSON.stringify(createProdutoDto.tamanhos || []),
+      // ─── CAMPOS DE PROMOÇÃO ───
+      precoPromocional: createProdutoDto.precoPromocional || null,
+      desconto: createProdutoDto.desconto || 0,
+      promocaoAtiva: createProdutoDto.promocaoAtiva || false,
     };
 
     const imagens = (createProdutoDto.imagens || [])
@@ -66,6 +74,13 @@ export class ProdutoService {
 
     const produto = await this.produtoRepository.createWithImages(data, imagens);
     this.logger.log(`Produto criado com ID: ${produto.id}`);
+    
+    // ─── NOTIFICA SOBRE PROMOÇÃO SE ATIVA ───
+    if (produto.promocaoAtiva && produto.desconto > 0) {
+      this.notifyPromotion(produto.id, produto.desconto).catch(err => 
+        this.logger.error(`Erro ao notificar promoção: ${err.message}`)
+      );
+    }
     
     this.notifyClientsAboutNewProduct(produto).catch(err => 
       this.logger.error(`Erro ao notificar: ${err.message}`)
@@ -92,6 +107,64 @@ export class ProdutoService {
       page: result.page,
       totalPages: result.totalPages
     };
+  }
+
+  // ─── NOVO: BUSCAR COM FILTROS AVANÇADOS ───
+  async findWithFilters(filterDto: FilterProdutoDto): Promise<{ data: ProdutoResponseDto[]; total: number; page: number; limit: number }> {
+    this.logger.log('Buscando produtos com filtros...');
+    
+    const result = await this.produtoRepository.findWithFilters({
+      categoria: filterDto.categoria,
+      precoMin: filterDto.precoMin,
+      precoMax: filterDto.precoMax,
+      emPromocao: filterDto.promocaoAtiva,
+      tag: filterDto.tag,
+      busca: filterDto.busca,
+      page: filterDto.page || 1,
+      limit: filterDto.limit || 10,
+    });
+    
+    return {
+      data: result.data.map(produto => new ProdutoResponseDto(produto)),
+      total: result.total,
+      page: filterDto.page || 1,
+      limit: filterDto.limit || 10,
+    };
+  }
+
+  // ─── NOVO: BUSCAR PRODUTOS EM PROMOÇÃO ───
+  async findEmPromocao(): Promise<PromocaoProdutoDto[]> {
+    const cacheKey = 'produtos:promocao';
+    const cached = this.getFromCache(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    this.logger.log('Buscando produtos em promoção...');
+    const produtos = await this.produtoRepository.findEmPromocao();
+    
+    const response = produtos.map(produto => new PromocaoProdutoDto(produto));
+    this.setInCache(cacheKey, response, 300000); // 5 minutos
+    
+    return response;
+  }
+
+  // ─── NOVO: BUSCAR MAIORES DESCONTOS ───
+  async findMaioresDescontos(limit: number = 10): Promise<PromocaoProdutoDto[]> {
+    const safeLimit = Math.min(limit, 30);
+    const cacheKey = `produtos:maiores-descontos:${safeLimit}`;
+    const cached = this.getFromCache(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    
+    this.logger.log('Buscando produtos com maiores descontos...');
+    const produtos = await this.produtoRepository.findMaioresDescontos(safeLimit);
+    
+    const response = produtos.map(produto => new PromocaoProdutoDto(produto));
+    this.setInCache(cacheKey, response, 300000);
+    
+    return response;
   }
 
   async findById(id: string): Promise<ProdutoResponseDto> {
@@ -283,6 +356,7 @@ export class ProdutoService {
     return similares.map(produto => new ProdutoResponseDto(produto));
   }
 
+  // ─── UPDATE COMPLETO COM CAMPOS DE PROMOÇÃO ───
   async update(id: string, updateProdutoDto: UpdateProdutoDto): Promise<ProdutoResponseDto> {
     if (!this.isValidId(id)) {
       throw new BadRequestException('ID inválido');
@@ -295,8 +369,12 @@ export class ProdutoService {
       throw new NotFoundException('Produto não encontrado');
     }
 
+    // Busca o produto atual para comparar mudanças na promoção
+    const produtoAtual = await this.produtoRepository.findById(id);
+
     const updateData: any = {};
 
+    // Campos básicos
     if (updateProdutoDto.nome !== undefined && updateProdutoDto.nome.trim()) {
       updateData.nome = updateProdutoDto.nome.trim();
       updateData.slug = slugify(updateProdutoDto.nome);
@@ -316,12 +394,22 @@ export class ProdutoService {
     if (updateProdutoDto.estoque !== undefined) {
       updateData.estoque = Math.max(0, updateProdutoDto.estoque);
     }
-    
     if (updateProdutoDto.cores !== undefined) {
       updateData.cores = JSON.stringify(updateProdutoDto.cores);
     }
     if (updateProdutoDto.tamanhos !== undefined) {
       updateData.tamanhos = JSON.stringify(updateProdutoDto.tamanhos);
+    }
+
+    // ─── CAMPOS DE PROMOÇÃO ───
+    if (updateProdutoDto.promocaoAtiva !== undefined) {
+      updateData.promocaoAtiva = updateProdutoDto.promocaoAtiva;
+    }
+    if (updateProdutoDto.precoPromocional !== undefined) {
+      updateData.precoPromocional = updateProdutoDto.precoPromocional;
+    }
+    if (updateProdutoDto.desconto !== undefined) {
+      updateData.desconto = updateProdutoDto.desconto;
     }
 
     if (Object.keys(updateData).length === 0) {
@@ -333,9 +421,108 @@ export class ProdutoService {
     this.clearCache(`produto:${id}`);
     this.clearCache(`produto:slug:${updatedProduto.slug}`);
     this.clearCache('produtos:populares:*');
+    this.clearCache('produtos:promocao');
+    this.clearCache('produtos:maiores-descontos:*');
     
     this.logger.log(`Produto com ID ${id} atualizado`);
+
+    // ─── DISPARA NOTIFICAÇÃO SE PROMOÇÃO FOI ATIVADA ───
+    const promoFoiAtivada = 
+      updateProdutoDto.promocaoAtiva === true &&
+      !produtoAtual?.promocaoAtiva &&
+      (updateProdutoDto.desconto || produtoAtual?.desconto || 0) > 0;
+
+    if (promoFoiAtivada) {
+      const descontoFinal = updateProdutoDto.desconto || produtoAtual?.desconto || 0;
+      this.notifyPromotion(id, descontoFinal).catch(err =>
+        this.logger.error(`Erro ao notificar promoção: ${err.message}`)
+      );
+    }
+    
     return new ProdutoResponseDto(updatedProduto);
+  }
+
+  // ─── NOVO: ATUALIZAR APENAS PROMOÇÃO ───
+  async updatePromocao(id: string, updatePromocaoDto: UpdatePromocaoDto): Promise<ProdutoResponseDto> {
+    if (!this.isValidId(id)) {
+      throw new BadRequestException('ID inválido');
+    }
+    
+    this.logger.log(`Atualizando promoção do produto ${id}`);
+    
+    const exists = await this.produtoRepository.exists({ id });
+    if (!exists) {
+      throw new NotFoundException('Produto não encontrado');
+    }
+
+    const produtoAtual = await this.produtoRepository.findById(id);
+    
+    const dadosPromocao: any = {};
+    let promocaoFoiAtivada = false;
+
+    if (updatePromocaoDto.promocaoAtiva !== undefined) {
+      dadosPromocao.promocaoAtiva = updatePromocaoDto.promocaoAtiva;
+      if (updatePromocaoDto.promocaoAtiva === true && !produtoAtual?.promocaoAtiva) {
+        promocaoFoiAtivada = true;
+      }
+    }
+    if (updatePromocaoDto.precoPromocional !== undefined) {
+      dadosPromocao.precoPromocional = updatePromocaoDto.precoPromocional;
+    }
+    if (updatePromocaoDto.desconto !== undefined) {
+      dadosPromocao.desconto = updatePromocaoDto.desconto;
+      if (updatePromocaoDto.desconto > 0 && !produtoAtual?.promocaoAtiva) {
+        promocaoFoiAtivada = true;
+      }
+    }
+
+    if (Object.keys(dadosPromocao).length === 0) {
+      throw new BadRequestException('Nenhum dado de promoção para atualizar');
+    }
+
+    const updatedProduto = await this.produtoRepository.updatePromocao(id, dadosPromocao);
+    
+    this.clearCache(`produto:${id}`);
+    this.clearCache('produtos:promocao');
+    this.clearCache('produtos:maiores-descontos:*');
+    this.clearCache(`produto:slug:${updatedProduto.slug}`);
+
+    // ─── DISPARA NOTIFICAÇÃO SE PROMOÇÃO FOI ATIVADA ───
+    if (promocaoFoiAtivada) {
+      const desconto = updatePromocaoDto.desconto || produtoAtual?.desconto || 0;
+      if (desconto > 0) {
+        this.notifyPromotion(id, desconto).catch(err =>
+          this.logger.error(`Erro ao notificar promoção: ${err.message}`)
+        );
+      }
+    }
+
+    return new ProdutoResponseDto(updatedProduto);
+  }
+
+  // ─── NOVO: ATUALIZAÇÃO EM MASSA ───
+  async bulkUpdate(ids: string[], updateDto: UpdateProdutoDto): Promise<BulkUpdateResponseDto> {
+    this.logger.log(`Atualizando ${ids.length} produtos em massa`);
+    
+    const response = new BulkUpdateResponseDto();
+    response.total = ids.length;
+
+    for (const id of ids) {
+      try {
+        await this.update(id, updateDto);
+        response.sucesso++;
+        response.detalhes.push({ id, status: 'sucesso' });
+      } catch (error) {
+        response.erro++;
+        response.detalhes.push({
+          id,
+          status: 'erro',
+          mensagem: error.message || 'Erro desconhecido'
+        });
+      }
+    }
+
+    return response;
   }
 
   async addImagem(produtoId: string, imagemDto: CreateProdutoImagemDto): Promise<ProdutoImagemResponseDto> {
@@ -502,6 +689,8 @@ export class ProdutoService {
     
     this.clearCache(`produto:${id}`);
     this.clearCache('produtos:populares:*');
+    this.clearCache('produtos:promocao');
+    this.clearCache('produtos:maiores-descontos:*');
     
     this.logger.log(`Produto com ID ${id} deletado`);
   }
@@ -528,6 +717,7 @@ export class ProdutoService {
     return tamanhos;
   }
 
+  // ─── NOTIFY PROMOTION (MELHORADO) ───
   async notifyPromotion(produtoId: string, desconto: number, mensagemPersonalizada?: string): Promise<void> {
     if (!this.isValidId(produtoId)) {
       throw new BadRequestException('ID do produto inválido');
@@ -542,10 +732,19 @@ export class ProdutoService {
       throw new NotFoundException('Produto não encontrado');
     }
     
+    // Verifica se o produto realmente está em promoção
+    if (!produto.promocaoAtiva) {
+      this.logger.warn(`Produto ${produtoId} não está com promoção ativa`);
+      return;
+    }
+    
     const clients = await this.userRepository.findAllClients();
     const limitedClients = clients.slice(0, 100);
     
-    if (limitedClients.length === 0) return;
+    if (limitedClients.length === 0) {
+      this.logger.log('Nenhum cliente para notificar');
+      return;
+    }
     
     const valorOriginal = Number(produto.preco);
     const valorComDesconto = valorOriginal * (1 - desconto / 100);
@@ -562,14 +761,23 @@ export class ProdutoService {
         tipo: 'promo',
         titulo: `🔥 ${desconto}% DE DESCONTO!`,
         mensagem: mensagem,
+        dados: {
+          produtoId: produto.id,
+          produtoSlug: produto.slug,
+          desconto: desconto,
+          precoOriginal: valorOriginal,
+          precoComDesconto: valorComDesconto,
+        }
       }).catch(err => this.logger.error(`Erro notificar ${client.id}: ${err.message}`))
     );
     
     await Promise.allSettled(notifyPromises);
+    
+    this.logger.log(`Notificados ${notifyPromises.length} clientes sobre a promoção do produto ${produto.nome}`);
   }
 
   private isValidId(id: string): boolean {
-    return id && /^[a-fA-F0-9]{24}$|^\d+$/.test(id);
+    return !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
   }
 
   private getFromCache(key: string): any {
@@ -623,6 +831,10 @@ export class ProdutoService {
           tipo: 'limitado',
           titulo: '✨ NOVIDADE NA COLEÇÃO!',
           mensagem: `Novo produto: ${produto.nome} - ${valorFormatado}`,
+          dados: {
+            produtoId: produto.id,
+            produtoSlug: produto.slug,
+          }
         }).catch(err => this.logger.error(`Erro notificar: ${err.message}`))
       );
       

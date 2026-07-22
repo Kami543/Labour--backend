@@ -32,6 +32,16 @@ export class PedidosController {
     return this.pedidosService.findByUser(req.user.userId, page, limit);
   }
 
+  @Get('meus')                          // ← ADICIONAR, antes de ':id'
+@ApiOperation({ summary: 'Listar meus pedidos' })
+async findMeusPedidos(
+  @Req() req: any,
+  @Query('page') page?: number,
+  @Query('limit') limit?: number,
+) {
+  return this.pedidosService.findByUser(req.user.userId, page, limit);
+}
+
   @Get(':id')
   @ApiOperation({ summary: 'Buscar pedido por ID' })
   async findOne(@Param('id') id: string, @Req() req: any) {

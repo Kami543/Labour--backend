@@ -48,14 +48,14 @@ export class CreateProdutoDto {
   @IsOptional()
   descricao?: string;
 
-  @IsDecimal({ decimal_digits: '2' }, { message: 'Preço deve ser um número decimal com até 2 casas' })
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço deve ser um número com até 2 casas decimais' })
   @IsPositive({ message: 'Preço deve ser positivo' })
   @Type(() => Number)
   preco: number;
 
   @IsString({ message: 'Categoria deve ser uma string' })
   @MinLength(2, { message: 'Categoria deve ter no mínimo 2 caracteres' })
-  categoria: string; // Agora é string livre
+  categoria: string;
 
   @IsString({ message: 'Tag deve ser uma string' })
   @IsOptional()
@@ -77,6 +77,24 @@ export class CreateProdutoDto {
   @IsArray({ message: 'Imagens deve ser um array' })
   @IsOptional()
   imagens?: CreateProdutoImagemDto[];
+
+  // ─── CAMPOS DE PROMOÇÃO ───
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
+  @IsPositive({ message: 'Preço promocional deve ser positivo' })
+  @IsOptional()
+  @Type(() => Number)
+  precoPromocional?: number;
+
+  @IsNumber({}, { message: 'Desconto deve ser um número' })
+  @Min(0, { message: 'Desconto não pode ser negativo' })
+  @Max(100, { message: 'Desconto não pode ultrapassar 100%' })
+  @IsOptional()
+  @Type(() => Number)
+  desconto?: number;
+
+  @IsBoolean({ message: 'promocaoAtiva deve ser booleano' })
+  @IsOptional()
+  promocaoAtiva?: boolean;
 }
 
 /**
@@ -92,7 +110,7 @@ export class UpdateProdutoDto {
   @IsOptional()
   descricao?: string;
 
-  @IsDecimal({ decimal_digits: '2' }, { message: 'Preço deve ser um número decimal com até 2 casas' })
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço deve ser um número com até 2 casas decimais' })
   @IsPositive({ message: 'Preço deve ser positivo' })
   @IsOptional()
   @Type(() => Number)
@@ -122,6 +140,24 @@ export class UpdateProdutoDto {
   @ArrayMinSize(1, { message: 'Deve ter no mínimo 1 tamanho' })
   @IsOptional()
   tamanhos?: string[];
+
+  // ─── CAMPOS DE PROMOÇÃO ───
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
+  @IsPositive({ message: 'Preço promocional deve ser positivo' })
+  @IsOptional()
+  @Type(() => Number)
+  precoPromocional?: number;
+
+  @IsNumber({}, { message: 'Desconto deve ser um número' })
+  @Min(0, { message: 'Desconto não pode ser negativo' })
+  @Max(100, { message: 'Desconto não pode ultrapassar 100%' })
+  @IsOptional()
+  @Type(() => Number)
+  desconto?: number;
+
+  @IsBoolean({ message: 'promocaoAtiva deve ser booleano' })
+  @IsOptional()
+  promocaoAtiva?: boolean;
 }
 
 /**
@@ -162,6 +198,11 @@ export class ProdutoResponseDto {
   imagens: ProdutoImagemResponseDto[];
   createdAt: Date;
   updatedAt: Date;
+  
+  // ─── CAMPOS DE PROMOÇÃO ───
+  precoPromocional?: number;
+  desconto?: number;
+  promocaoAtiva: boolean;
 
   constructor(produto: any) {
     this.id = produto.id;
@@ -197,6 +238,11 @@ export class ProdutoResponseDto {
     } else {
       this.imagens = [];
     }
+    
+    // ─── CAMPOS DE PROMOÇÃO ───
+    this.precoPromocional = produto.precoPromocional ? parseFloat(produto.precoPromocional) : undefined;
+    this.desconto = produto.desconto || 0;
+    this.promocaoAtiva = produto.promocaoAtiva || false;
     
     this.createdAt = produto.createdAt;
     this.updatedAt = produto.updatedAt;
