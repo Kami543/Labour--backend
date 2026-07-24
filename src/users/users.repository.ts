@@ -24,7 +24,6 @@ export class UserRepository extends BaseRepository<User> {
     return this.model.findUnique({ where: { cpf } });
   }
 
-  // ✅ CORRIGIDO - Retorna User[] completo
   async findByRole(role: string, limit?: number): Promise<User[]> {
     const take = limit ? Math.min(limit, 200) : undefined;
     return this.model.findMany({ 
@@ -33,7 +32,6 @@ export class UserRepository extends BaseRepository<User> {
     });
   }
 
-  // ✅ CORRIGIDO - Retorna User[] completo
   async findAllAdmins(limit?: number): Promise<User[]> {
     const take = limit ? Math.min(limit, 100) : undefined;
     return this.model.findMany({ 
@@ -42,7 +40,6 @@ export class UserRepository extends BaseRepository<User> {
     });
   }
 
-  // ✅ CORRIGIDO - Retorna User[] completo
   async findAllClients(limit?: number): Promise<User[]> {
     const take = limit ? Math.min(limit, 200) : undefined;
     return this.model.findMany({ 
@@ -110,9 +107,10 @@ export class UserRepository extends BaseRepository<User> {
         itens: {
           include: {
             produto: {
-              include: {
-                imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
-              }
+              // REMOVA este bloco de imagens (linha 114):
+              // include: {
+              //   imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
+              // }
             }
           }
         }
@@ -130,9 +128,10 @@ export class UserRepository extends BaseRepository<User> {
       take,
       include: { 
         produto: {
-          include: {
-            imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
-          }
+          // REMOVA este bloco de imagens (linha 134):
+          // include: {
+          //   imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
+          // }
         }
       },
     });
@@ -207,9 +206,10 @@ export class UserRepository extends BaseRepository<User> {
             itens: {
               include: {
                 produto: {
-                  include: {
-                    imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
-                  }
+                  // REMOVA este bloco de imagens (linha 211):
+                  // include: {
+                  //   imagens: { where: { isPrincipal: true }, take: 1, select: { url: true } }
+                  // }
                 }
               }
             }

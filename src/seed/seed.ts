@@ -99,148 +99,154 @@ export async function seedDatabase() {
   console.log('✅ Usuários criados:', { user1: user1.email, user2: user2.email, admin: admin.email });
 
   // ========================================
-  // PRODUTOS (CORRIGIDO - usando isPrincipal)
+  // PRODUTOS (COM PROMOÇÃO)
   // ========================================
 
+  // Produto 1: Camiseta Básica (SEM PROMOÇÃO)
   const produto1 = await findOrCreateProduto("Camiseta Masculina Básica", {
     nome: "Camiseta Masculina Básica",
     slug: "camiseta-masculina-basica",
     descricao: "Camiseta de algodão 100% de alta qualidade, ideal para uso diário. Confortável e durável.",
     preco: 59.90,
+    preco_promocional: null,
+    desconto: 0,
+    promocao_ativa: false,
     categoria: "Masculino",
     tag: "roupa",
     estoque: 100,
     cores: ["Preto", "Branco", "Azul Marinho", "Cinza"],
     tamanhos: ["P", "M", "G", "GG", "XG"],
-    imagens: {
-      create: [
-        {
-          url: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=500",
-          altText: "Camiseta masculina básica preta",
-          ordem: 0,
-          isPrincipal: true  // ✅ CORRIGIDO: was "principal", now "isPrincipal"
-        }
-      ]
-    }
+    imagem: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=500"
   });
 
+  // Produto 2: Vestido Floral (COM PROMOÇÃO - 20% OFF)
   const produto2 = await findOrCreateProduto("Vestido Floral Feminino", {
     nome: "Vestido Floral Feminino",
     slug: "vestido-floral-feminino",
     descricao: "Vestido elegante com estampa floral, tecido leve e fluido. Perfeito para ocasiões especiais.",
     preco: 129.90,
+    preco_promocional: 103.92,
+    desconto: 20,
+    promocao_ativa: true,
     categoria: "Feminino",
     tag: "vestido",
     estoque: 50,
     cores: ["Vermelho", "Azul", "Rosa", "Amarelo"],
     tamanhos: ["P", "M", "G"],
-    imagens: {
-      create: [
-        {
-          url: "https://images.unsplash.com/photo-1612336307429-8a898d10e223?w=500",
-          altText: "Vestido floral feminino vermelho",
-          ordem: 0,
-          isPrincipal: true  // ✅ CORRIGIDO
-        }
-      ]
-    }
+    imagem: "https://images.unsplash.com/photo-1612336307429-8a898d10e223?w=500"
   });
 
+  // Produto 3: Jaqueta Jeans (COM PROMOÇÃO - 15% OFF)
   const produto3 = await findOrCreateProduto("Jaqueta Jeans Masculina", {
     nome: "Jaqueta Jeans Masculina",
     slug: "jaqueta-jeans-masculina",
     descricao: "Jaqueta jeans clássica com acabamento premium. Estilo casual e versátil.",
     preco: 199.90,
+    preco_promocional: 169.92,
+    desconto: 15,
+    promocao_ativa: true,
     categoria: "Masculino",
     tag: "jaqueta",
     estoque: 30,
     cores: ["Azul Claro", "Azul Escuro", "Preto"],
     tamanhos: ["P", "M", "G", "GG"],
-    imagens: {
-      create: [
-        {
-          url: "https://images.unsplash.com/photo-1576995853123-5a10305d93c0?w=500",
-          altText: "Jaqueta jeans masculina azul",
-          ordem: 0,
-          isPrincipal: true  // ✅ CORRIGIDO
-        }
-      ]
-    }
+    imagem: "https://images.unsplash.com/photo-1576995853123-5a10305d93c0?w=500"
   });
 
+  // Produto 4: Bolsa de Couro (SEM PROMOÇÃO)
   const produto4 = await findOrCreateProduto("Bolsa Feminina de Couro", {
     nome: "Bolsa Feminina de Couro",
     slug: "bolsa-feminina-couro",
     descricao: "Bolsa elegante em couro legítimo, com alça ajustável e muitos compartimentos.",
     preco: 299.90,
+    preco_promocional: null,
+    desconto: 0,
+    promocao_ativa: false,
     categoria: "Acessorios",
     tag: "bolsa",
     estoque: 25,
     cores: ["Preto", "Marrom", "Bege"],
     tamanhos: ["Único"],
-    imagens: {
-      create: [
-        {
-          url: "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=500",
-          altText: "Bolsa feminina de couro preta",
-          ordem: 0,
-          isPrincipal: true  // ✅ CORRIGIDO
-        }
-      ]
-    }
+    imagem: "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=500"
   });
 
+  // Produto 5: Tênis Esportivo (COM PROMOÇÃO - 10% OFF)
   const produto5 = await findOrCreateProduto("Tênis Esportivo", {
     nome: "Tênis Esportivo",
     slug: "tenis-esportivo",
     descricao: "Tênis confortável para corrida e atividades físicas. Com amortecimento e respirabilidade.",
     preco: 249.90,
+    preco_promocional: 224.91,
+    desconto: 10,
+    promocao_ativa: true,
     categoria: "Masculino",
     tag: "calcado",
     estoque: 80,
     cores: ["Preto/Branco", "Azul/Cinza", "Vermelho"],
     tamanhos: ["37", "38", "39", "40", "41", "42", "43"],
-    imagens: {
-      create: [
-        {
-          url: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500",
-          altText: "Tênis esportivo preto e branco",
-          ordem: 0,
-          isPrincipal: true  // ✅ CORRIGIDO
-        }
-      ]
-    }
+    imagem: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=500"
   });
 
+  // Produto 6: Colar de Prata (COM PROMOÇÃO - 25% OFF - MAIOR DESCONTO)
   const produto6 = await findOrCreateProduto("Colar de Prata 925", {
     nome: "Colar de Prata 925",
     slug: "colar-prata-925",
     descricao: "Colar delicado em prata 925 com pingente de coração. Acabamento de alta qualidade.",
     preco: 89.90,
+    preco_promocional: 67.43,
+    desconto: 25,
+    promocao_ativa: true,
     categoria: "Acessorios",
     tag: "joia",
     estoque: 150,
     cores: ["Prata"],
     tamanhos: ["40cm", "45cm", "50cm"],
-    imagens: {
-      create: [
-        {
-          url: "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=500",
-          altText: "Colar de prata 925 com pingente coração",
-          ordem: 0,
-          isPrincipal: true  // ✅ CORRIGIDO
-        }
-      ]
-    }
+    imagem: "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=500"
+  });
+
+  // Produto 7: Camisa Social (SEM PROMOÇÃO)
+  const produto7 = await findOrCreateProduto("Camisa Social Masculina", {
+    nome: "Camisa Social Masculina",
+    slug: "camisa-social-masculina",
+    descricao: "Camisa social de alta qualidade, perfeita para ocasiões formais e trabalho.",
+    preco: 149.90,
+    preco_promocional: null,
+    desconto: 0,
+    promocao_ativa: false,
+    categoria: "Masculino",
+    tag: "camisa",
+    estoque: 60,
+    cores: ["Branco", "Azul Claro", "Cinza"],
+    tamanhos: ["P", "M", "G", "GG"],
+    imagem: "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=500"
+  });
+
+  // Produto 8: Shorts Jeans (COM PROMOÇÃO - 30% OFF - LANÇAMENTO)
+  const produto8 = await findOrCreateProduto("Shorts Jeans Feminino", {
+    nome: "Shorts Jeans Feminino",
+    slug: "shorts-jeans-feminino",
+    descricao: "Shorts jeans moderno com cintura alta, ideal para looks casuais e despojados.",
+    preco: 89.90,
+    preco_promocional: 62.93,
+    desconto: 30,
+    promocao_ativa: true,
+    categoria: "Feminino",
+    tag: "short",
+    estoque: 40,
+    cores: ["Azul Claro", "Azul Escuro", "Preto"],
+    tamanhos: ["P", "M", "G"],
+    imagem: "https://images.unsplash.com/photo-1591195853828-11db59a44f6b?w=500"
   });
 
   console.log('✅ Produtos criados:', { 
-    produto1: produto1.nome, 
-    produto2: produto2.nome, 
-    produto3: produto3.nome,
+    produto1: produto1.nome,
+    produto2: `${produto2.nome} (${produto2.desconto}% OFF)`,
+    produto3: `${produto3.nome} (${produto3.desconto}% OFF)`,
     produto4: produto4.nome,
-    produto5: produto5.nome,
-    produto6: produto6.nome 
+    produto5: `${produto5.nome} (${produto5.desconto}% OFF)`,
+    produto6: `${produto6.nome} (${produto6.desconto}% OFF - MAIOR DESCONTO)`,
+    produto7: produto7.nome,
+    produto8: `${produto8.nome} (${produto8.desconto}% OFF - LANÇAMENTO)`,
   });
 
   // ========================================
@@ -286,6 +292,27 @@ export async function seedDatabase() {
       cor: "Azul Escuro",
       userId: user1.id,
       produtoId: produto3.id,
+    },
+  });
+
+  const cartItem3 = await prisma.cartItem.upsert({
+    where: {
+      userId_produtoId_tamanho_cor: {
+        userId: user2.id,
+        produtoId: produto2.id,
+        tamanho: "M",
+        cor: "Vermelho",
+      },
+    },
+    update: {
+      quantidade: 1,
+    },
+    create: {
+      quantidade: 1,
+      tamanho: "M",
+      cor: "Vermelho",
+      userId: user2.id,
+      produtoId: produto2.id,
     },
   });
 
@@ -418,6 +445,27 @@ export async function seedDatabase() {
     },
   });
 
+  const avaliacao3 = await prisma.avaliacao.upsert({
+    where: {
+      userId_produtoId: {
+        userId: user1.id,
+        produtoId: produto6.id,
+      },
+    },
+    update: {
+      nota: 5,
+      titulo: "Colar maravilhoso!",
+      comentario: "O colar é lindo, acabamento impecável. Valeu cada centavo!",
+    },
+    create: {
+      nota: 5,
+      titulo: "Colar maravilhoso!",
+      comentario: "O colar é lindo, acabamento impecável. Valeu cada centavo!",
+      userId: user1.id,
+      produtoId: produto6.id,
+    },
+  });
+
   console.log('✅ Avaliações criadas');
 
   // ========================================
@@ -430,8 +478,8 @@ export async function seedDatabase() {
     create: {
       id: "notificacao-1",
       tipo: "promo",
-      titulo: "Promoção imperdível!",
-      mensagem: "Aproveite 20% OFF em toda loja usando o código PROMO20",
+      titulo: "🔥 Ofertas imperdíveis!",
+      mensagem: "Aproveite descontos de até 30% em produtos selecionados!",
       lida: false,
       userId: user1.id,
     },
@@ -443,7 +491,7 @@ export async function seedDatabase() {
     create: {
       id: "notificacao-2",
       tipo: "entrega",
-      titulo: "Pedido entregue!",
+      titulo: "📦 Pedido entregue!",
       mensagem: `Seu pedido ${pedido1.numero} foi entregue com sucesso.`,
       lida: true,
       userId: user1.id,
@@ -456,8 +504,21 @@ export async function seedDatabase() {
     create: {
       id: "notificacao-3",
       tipo: "sistema",
-      titulo: "Bem-vindo à Loja!",
+      titulo: "✨ Bem-vindo à Loja!",
       mensagem: "Obrigado por se cadastrar. Explore nossos produtos!",
+      lida: false,
+      userId: user2.id,
+    },
+  });
+
+  const notificacao4 = await prisma.notificacao.upsert({
+    where: { id: "notificacao-4" },
+    update: {},
+    create: {
+      id: "notificacao-4",
+      tipo: "promo",
+      titulo: "💎 Oferta Especial!",
+      mensagem: "Colar de Prata 925 com 25% OFF! Aproveite essa oportunidade única.",
       lida: false,
       userId: user2.id,
     },
@@ -489,9 +550,12 @@ export async function seedDatabase() {
   // Retorna resumo dos dados criados
   return {
     users: { user1, user2, admin },
-    produtos: { produto1, produto2, produto3, produto4, produto5, produto6 },
+    produtos: { 
+      produto1, produto2, produto3, produto4, 
+      produto5, produto6, produto7, produto8 
+    },
     pedidos: { pedido1 },
-    avaliacoes: { avaliacao1, avaliacao2 },
+    avaliacoes: { avaliacao1, avaliacao2, avaliacao3 },
   };
 }
 

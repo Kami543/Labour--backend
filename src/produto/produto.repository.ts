@@ -1,6 +1,7 @@
+// src/produto/produto.repository.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Produto, ProdutoImagem } from '@prisma/client';
+import { Produto, CategoriaProduto } from '@prisma/client';
 import { BaseRepository } from '../common/utils/baseRepository';
 
 @Injectable()
@@ -15,67 +16,41 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     return this.prisma.produto;
   }
 
-  async createWithImages(data: any, imagens?: any[]): Promise<Produto & { imagens: ProdutoImagem[] }> {
-    // ─── GARANTE QUE OS CAMPOS DE PROMOÇÃO ESTÃO PRESENTES ───
+  // ─── CRIAÇÃO COM IMAGEM (SINGLE STRING) ───
+  async createWithImages(data: any, imagens?: any[]): Promise<Produto> {
     const createData = {
       ...data,
-      // Garante valores padrão para campos de promoção
-      precoPromocional: data.precoPromocional || null,
+      preco_promocional: data.preco_promocional || data.precoPromocional || null,
       desconto: data.desconto || 0,
-      promocaoAtiva: data.promocaoAtiva || false,
+      promocao_ativa: data.promocao_ativa || data.promocaoAtiva || false,
     };
 
+    // Se houver imagens, pega a primeira como imagem principal
+    if (imagens && imagens.length > 0) {
+      const imagemPrincipal = imagens.find(img => img.isPrincipal) || imagens[0];
+      createData.imagem = imagemPrincipal.url;
+    }
+
     return this.model.create({
-      data: {
-        ...createData,
-        imagens: imagens && imagens.length > 0 ? {
-          create: imagens
-        } : undefined
-      },
-      include: {
-        imagens: true
-      }
+      data: createData,
     });
   }
 
-  async findByIdWithImages(id: string): Promise<(Produto & { imagens: ProdutoImagem[] }) | null> {
+  async findByIdWithImages(id: string): Promise<Produto | null> {
     return this.model.findUnique({
-      where: { id, deletedAt: null },
-      include: {
-        imagens: {
-          orderBy: {
-            ordem: 'asc'
-          }
-        }
-      }
+      where: { id },
     });
   }
 
-  async findBySlug(slug: string): Promise<(Produto & { imagens: ProdutoImagem[] }) | null> {
+  async findBySlug(slug: string): Promise<Produto | null> {
     return this.model.findFirst({
-      where: { slug, deletedAt: null },
-      include: {
-        imagens: {
-          orderBy: {
-            ordem: 'asc'
-          }
-        }
-      }
+      where: { slug },
     });
   }
 
-  async findByCategoria(categoria: string): Promise<Produto[]> {
+  async findByCategoria(categoria: CategoriaProduto): Promise<Produto[]> {
     return this.model.findMany({
-      where: { 
-        categoria,
-        deletedAt: null 
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
-      },
+      where: { categoria },
       orderBy: {
         createdAt: 'desc'
       }
@@ -84,16 +59,7 @@ export class ProdutoRepository extends BaseRepository<Produto> {
 
   async findByTag(tag: string): Promise<Produto[]> {
     return this.model.findMany({
-      where: { 
-        tag,
-        deletedAt: null 
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
-      },
+      where: { tag },
       orderBy: {
         createdAt: 'desc'
       }
@@ -102,16 +68,7 @@ export class ProdutoRepository extends BaseRepository<Produto> {
 
   async findEmEstoque(): Promise<Produto[]> {
     return this.model.findMany({
-      where: { 
-        estoque: { gt: 0 },
-        deletedAt: null 
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
-      },
+      where: { estoque: { gt: 0 } },
       orderBy: {
         createdAt: 'desc'
       }
@@ -120,16 +77,7 @@ export class ProdutoRepository extends BaseRepository<Produto> {
 
   async findComEstoqueBaixo(limite: number = 5): Promise<Produto[]> {
     return this.model.findMany({
-      where: { 
-        estoque: { lte: limite },
-        deletedAt: null 
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
-      },
+      where: { estoque: { lte: limite } },
       orderBy: {
         estoque: 'asc'
       }
@@ -143,13 +91,6 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     return this.model.findMany({
       where: {
         createdAt: { gte: dataLimite },
-        deletedAt: null,
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
       },
       orderBy: {
         createdAt: 'desc'
@@ -159,50 +100,20 @@ export class ProdutoRepository extends BaseRepository<Produto> {
 
   async findPopulares(limit: number = 10): Promise<Produto[]> {
     return this.model.findMany({
-      where: {
-        deletedAt: null
-      },
       take: limit,
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        },
-        _count: { 
-          select: { 
-            avaliacoes: true,
-            pedidos: true
-          } 
-        },
-      },
-      orderBy: [
-        {
-          avaliacoes: { _count: 'desc' },
-        },
-        {
-          pedidos: { _count: 'desc' },
-        },
-        {
-          createdAt: 'desc',
-        },
-      ],
+      orderBy: {
+        createdAt: 'desc'
+      }
     });
   }
 
-  async findSimilares(produtoId: string, categoria: string, limit: number = 5): Promise<Produto[]> {
+  async findSimilares(produtoId: string, categoria: CategoriaProduto, limit: number = 5): Promise<Produto[]> {
     return this.model.findMany({
       where: {
         AND: [
           { id: { not: produtoId } },
           { categoria: categoria },
-          { deletedAt: null },
         ],
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
       },
       take: limit,
       orderBy: {
@@ -211,19 +122,12 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     });
   }
 
-  // ─── NOVO: BUSCAR PRODUTOS EM PROMOÇÃO ───
+  // ─── BUSCAR PRODUTOS EM PROMOÇÃO ───
   async findEmPromocao(): Promise<Produto[]> {
     return this.model.findMany({
       where: {
-        promocaoAtiva: true,
+        promocao_ativa: true,
         desconto: { gt: 0 },
-        deletedAt: null,
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
       },
       orderBy: {
         desconto: 'desc'
@@ -231,19 +135,12 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     });
   }
 
-  // ─── NOVO: BUSCAR PRODUTOS COM MAIOR DESCONTO ───
+  // ─── BUSCAR PRODUTOS COM MAIOR DESCONTO ───
   async findMaioresDescontos(limit: number = 10): Promise<Produto[]> {
     return this.model.findMany({
       where: {
-        promocaoAtiva: true,
+        promocao_ativa: true,
         desconto: { gt: 0 },
-        deletedAt: null,
-      },
-      include: {
-        imagens: {
-          where: { isPrincipal: true },
-          take: 1
-        }
       },
       orderBy: {
         desconto: 'desc'
@@ -253,15 +150,12 @@ export class ProdutoRepository extends BaseRepository<Produto> {
   }
 
   async update(id: string, data: any): Promise<Produto> {
-    // ─── PREPARA OS DADOS PARA UPDATE ───
     const updateData: any = {};
     
-    // Mapeia todos os campos que podem ser atualizados
     const camposPermitidos = [
       'nome', 'slug', 'descricao', 'preco', 'categoria', 
-      'tag', 'estoque', 'cores', 'tamanhos',
-      // ─── CAMPOS DE PROMOÇÃO ───
-      'precoPromocional', 'desconto', 'promocaoAtiva'
+      'tag', 'estoque', 'cores', 'tamanhos', 'imagem',
+      'preco_promocional', 'desconto', 'promocao_ativa'
     ];
 
     for (const campo of camposPermitidos) {
@@ -270,21 +164,17 @@ export class ProdutoRepository extends BaseRepository<Produto> {
       }
     }
 
-    // Se precoPromocional for undefined ou null, mantém o valor existente
-    if (data.precoPromocional === undefined) {
-      // Não atualiza, mantém o valor atual
+    // Suporte para camelCase
+    if (data.precoPromocional !== undefined && updateData.preco_promocional === undefined) {
+      updateData.preco_promocional = data.precoPromocional;
+    }
+    if (data.promocaoAtiva !== undefined && updateData.promocao_ativa === undefined) {
+      updateData.promocao_ativa = data.promocaoAtiva;
     }
 
     return this.model.update({
       where: { id },
       data: updateData,
-      include: {
-        imagens: {
-          orderBy: {
-            ordem: 'asc'
-          }
-        }
-      }
     });
   }
 
@@ -292,13 +182,6 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     return this.model.update({
       where: { id: produtoId },
       data: { estoque: quantidade },
-      include: {
-        imagens: {
-          orderBy: {
-            ordem: 'asc'
-          }
-        }
-      }
     });
   }
 
@@ -330,7 +213,6 @@ export class ProdutoRepository extends BaseRepository<Produto> {
 
   async getCoresDisponiveis(): Promise<string[]> {
     const produtos = await this.model.findMany({
-      where: { deletedAt: null },
       select: { cores: true },
     });
 
@@ -349,7 +231,8 @@ export class ProdutoRepository extends BaseRepository<Produto> {
           }
         }
       } catch (error) {
-        this.logger.warn(`Erro ao parsear cores do produto: ${error.message}`);
+        const message = error instanceof Error ? error.message : 'Erro desconhecido';
+        this.logger.warn(`Erro ao parsear cores do produto: ${message}`);
       }
     }
     return Array.from(coresSet).sort();
@@ -357,7 +240,6 @@ export class ProdutoRepository extends BaseRepository<Produto> {
 
   async getTamanhosDisponiveis(): Promise<string[]> {
     const produtos = await this.model.findMany({
-      where: { deletedAt: null },
       select: { tamanhos: true },
     });
 
@@ -376,86 +258,48 @@ export class ProdutoRepository extends BaseRepository<Produto> {
           }
         }
       } catch (error) {
-        this.logger.warn(`Erro ao parsear tamanhos do produto: ${error.message}`);
+        const message = error instanceof Error ? error.message : 'Erro desconhecido';
+        this.logger.warn(`Erro ao parsear tamanhos do produto: ${message}`);
       }
     }
     return Array.from(tamanhosSet).sort();
   }
 
-  async addImagem(produtoId: string, imagemData: any): Promise<ProdutoImagem> {
-    return this.prisma.produtoImagem.create({
-      data: {
-        ...imagemData,
-        produtoId
-      }
+  // ─── MÉTODOS DE IMAGEM (AGORA SIMPLES) ───
+  async updateImagem(produtoId: string, imagemUrl: string): Promise<Produto> {
+    return this.model.update({
+      where: { id: produtoId },
+      data: { imagem: imagemUrl },
     });
-  }
-
-  async removeImagem(imagemId: string): Promise<void> {
-    await this.prisma.produtoImagem.delete({
-      where: { id: imagemId }
-    });
-  }
-
-  async updateImagemPrincipal(produtoId: string, imagemId: string): Promise<void> {
-    // Primeiro, remove isPrincipal de todas as imagens do produto
-    await this.prisma.produtoImagem.updateMany({
-      where: { produtoId },
-      data: { isPrincipal: false }
-    });
-    
-    // Depois, marca a nova imagem como principal
-    await this.prisma.produtoImagem.update({
-      where: { id: imagemId },
-      data: { isPrincipal: true }
-    });
-  }
-
-  async reorderImagens(produtoId: string, imagensOrdenadas: { id: string; ordem: number }[]): Promise<void> {
-    const updates = imagensOrdenadas.map(img => 
-      this.prisma.produtoImagem.update({
-        where: { id: img.id },
-        data: { ordem: img.ordem }
-      })
-    );
-    
-    await this.prisma.$transaction(updates);
   }
 
   // ─── MÉTODO PARA ATUALIZAR APENAS A PROMOÇÃO ───
   async updatePromocao(produtoId: string, dadosPromocao: {
-    precoPromocional?: number;
+    preco_promocional?: number;
     desconto?: number;
-    promocaoAtiva?: boolean;
+    promocao_ativa?: boolean;
   }): Promise<Produto> {
     const updateData: any = {};
     
-    if (dadosPromocao.precoPromocional !== undefined) {
-      updateData.precoPromocional = dadosPromocao.precoPromocional;
+    if (dadosPromocao.preco_promocional !== undefined) {
+      updateData.preco_promocional = dadosPromocao.preco_promocional;
     }
     if (dadosPromocao.desconto !== undefined) {
       updateData.desconto = dadosPromocao.desconto;
     }
-    if (dadosPromocao.promocaoAtiva !== undefined) {
-      updateData.promocaoAtiva = dadosPromocao.promocaoAtiva;
+    if (dadosPromocao.promocao_ativa !== undefined) {
+      updateData.promocao_ativa = dadosPromocao.promocao_ativa;
     }
 
     return this.model.update({
       where: { id: produtoId },
       data: updateData,
-      include: {
-        imagens: {
-          orderBy: {
-            ordem: 'asc'
-          }
-        }
-      }
     });
   }
 
-  // ─── MÉTODO PARA BUSCAR PRODUTOS COM FILTROS AVANÇADOS ───
+  // ─── MÉTODO PARA BUSCAR PRODUTOS COM FILTROS ───
   async findWithFilters(filters: {
-    categoria?: string;
+    categoria?: CategoriaProduto;
     precoMin?: number;
     precoMax?: number;
     emPromocao?: boolean;
@@ -476,13 +320,10 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     } = filters;
 
     const skip = (page - 1) * limit;
-    const where: any = { deletedAt: null };
+    const where: any = {};
 
     if (categoria) {
-      where.categoria = {
-        equals: categoria,
-        mode: 'insensitive'
-      };
+      where.categoria = categoria;
     }
 
     if (precoMin !== undefined || precoMax !== undefined) {
@@ -492,7 +333,7 @@ export class ProdutoRepository extends BaseRepository<Produto> {
     }
 
     if (emPromocao) {
-      where.promocaoAtiva = true;
+      where.promocao_ativa = true;
       where.desconto = { gt: 0 };
     }
 
@@ -507,20 +348,12 @@ export class ProdutoRepository extends BaseRepository<Produto> {
       where.OR = [
         { nome: { contains: busca, mode: 'insensitive' } },
         { descricao: { contains: busca, mode: 'insensitive' } },
-        { categoria: { contains: busca, mode: 'insensitive' } },
       ];
     }
 
     const [data, total] = await Promise.all([
       this.model.findMany({
         where,
-        include: {
-          imagens: {
-            orderBy: {
-              ordem: 'asc'
-            }
-          }
-        },
         skip,
         take: limit,
         orderBy: {

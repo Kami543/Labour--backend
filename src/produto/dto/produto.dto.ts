@@ -1,3 +1,4 @@
+// src/produto/dto/produto.dto.ts
 import {
   IsString,
   IsNumber,
@@ -5,12 +6,10 @@ import {
   IsOptional,
   IsArray,
   ArrayMinSize,
-  IsDecimal,
   Min,
   Max,
   IsUrl,
   IsBoolean,
-  IsUUID,
   MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -38,6 +37,7 @@ export class CreateProdutoImagemDto {
 
 /**
  * DTO para criar um novo produto (com múltiplas imagens)
+ * Suporta tanto camelCase quanto snake_case
  */
 export class CreateProdutoDto {
   @IsString({ message: 'Nome deve ser uma string' })
@@ -78,12 +78,19 @@ export class CreateProdutoDto {
   @IsOptional()
   imagens?: CreateProdutoImagemDto[];
 
-  // ─── CAMPOS DE PROMOÇÃO ───
+  // ─── CAMPOS DE PROMOÇÃO (CAMELCASE PARA O DTO) ───
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
   @IsPositive({ message: 'Preço promocional deve ser positivo' })
   @IsOptional()
   @Type(() => Number)
   precoPromocional?: number;
+
+  // Suporte para snake_case também
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
+  @IsPositive({ message: 'Preço promocional deve ser positivo' })
+  @IsOptional()
+  @Type(() => Number)
+  preco_promocional?: number;
 
   @IsNumber({}, { message: 'Desconto deve ser um número' })
   @Min(0, { message: 'Desconto não pode ser negativo' })
@@ -95,10 +102,15 @@ export class CreateProdutoDto {
   @IsBoolean({ message: 'promocaoAtiva deve ser booleano' })
   @IsOptional()
   promocaoAtiva?: boolean;
+
+  @IsBoolean({ message: 'promocao_ativa deve ser booleano' })
+  @IsOptional()
+  promocao_ativa?: boolean;
 }
 
 /**
  * DTO para atualizar produto
+ * Suporta tanto camelCase quanto snake_case
  */
 export class UpdateProdutoDto {
   @IsString({ message: 'Nome deve ser uma string' })
@@ -141,12 +153,19 @@ export class UpdateProdutoDto {
   @IsOptional()
   tamanhos?: string[];
 
-  // ─── CAMPOS DE PROMOÇÃO ───
+  // ─── CAMPOS DE PROMOÇÃO (CAMELCASE PARA O DTO) ───
   @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
   @IsPositive({ message: 'Preço promocional deve ser positivo' })
   @IsOptional()
   @Type(() => Number)
   precoPromocional?: number;
+
+  // Suporte para snake_case
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
+  @IsPositive({ message: 'Preço promocional deve ser positivo' })
+  @IsOptional()
+  @Type(() => Number)
+  preco_promocional?: number;
 
   @IsNumber({}, { message: 'Desconto deve ser um número' })
   @Min(0, { message: 'Desconto não pode ser negativo' })
@@ -158,6 +177,42 @@ export class UpdateProdutoDto {
   @IsBoolean({ message: 'promocaoAtiva deve ser booleano' })
   @IsOptional()
   promocaoAtiva?: boolean;
+
+  @IsBoolean({ message: 'promocao_ativa deve ser booleano' })
+  @IsOptional()
+  promocao_ativa?: boolean;
+}
+
+/**
+ * DTO para atualizar apenas a promoção
+ */
+export class UpdatePromocaoDto {
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
+  @IsPositive({ message: 'Preço promocional deve ser positivo' })
+  @IsOptional()
+  @Type(() => Number)
+  precoPromocional?: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 }, { message: 'Preço promocional deve ter até 2 casas decimais' })
+  @IsPositive({ message: 'Preço promocional deve ser positivo' })
+  @IsOptional()
+  @Type(() => Number)
+  preco_promocional?: number;
+
+  @IsNumber({}, { message: 'Desconto deve ser um número' })
+  @Min(0, { message: 'Desconto não pode ser negativo' })
+  @Max(100, { message: 'Desconto não pode ultrapassar 100%' })
+  @IsOptional()
+  @Type(() => Number)
+  desconto?: number;
+
+  @IsBoolean({ message: 'promocaoAtiva deve ser booleano' })
+  @IsOptional()
+  promocaoAtiva?: boolean;
+
+  @IsBoolean({ message: 'promocao_ativa deve ser booleano' })
+  @IsOptional()
+  promocao_ativa?: boolean;
 }
 
 /**
@@ -182,7 +237,7 @@ export class ProdutoImagemResponseDto {
 }
 
 /**
- * DTO para resposta de produto
+ * DTO para resposta de produto (SNAKE_CASE para o Prisma)
  */
 export class ProdutoResponseDto {
   id: string;
@@ -199,17 +254,17 @@ export class ProdutoResponseDto {
   createdAt: Date;
   updatedAt: Date;
   
-  // ─── CAMPOS DE PROMOÇÃO ───
-  precoPromocional?: number;
-  desconto?: number;
-  promocaoAtiva: boolean;
+  // ─── CAMPOS DE PROMOÇÃO (SNAKE_CASE PARA O PRISMA) ───
+  preco_promocional?: number;
+  desconto: number;
+  promocao_ativa: boolean;
 
   constructor(produto: any) {
     this.id = produto.id;
     this.nome = produto.nome;
     this.slug = produto.slug;
     this.descricao = produto.descricao || '';
-    this.preco = parseFloat(produto.preco);
+    this.preco = typeof produto.preco === 'number' ? produto.preco : parseFloat(produto.preco);
     this.categoria = produto.categoria;
     this.tag = produto.tag || '';
     this.estoque = produto.estoque;
@@ -218,7 +273,11 @@ export class ProdutoResponseDto {
     if (Array.isArray(produto.cores)) {
       this.cores = produto.cores;
     } else if (produto.cores) {
-      this.cores = JSON.parse(produto.cores);
+      try {
+        this.cores = typeof produto.cores === 'string' ? JSON.parse(produto.cores) : produto.cores;
+      } catch {
+        this.cores = [];
+      }
     } else {
       this.cores = [];
     }
@@ -227,25 +286,65 @@ export class ProdutoResponseDto {
     if (Array.isArray(produto.tamanhos)) {
       this.tamanhos = produto.tamanhos;
     } else if (produto.tamanhos) {
-      this.tamanhos = JSON.parse(produto.tamanhos);
+      try {
+        this.tamanhos = typeof produto.tamanhos === 'string' ? JSON.parse(produto.tamanhos) : produto.tamanhos;
+      } catch {
+        this.tamanhos = [];
+      }
     } else {
       this.tamanhos = [];
     }
     
     // Imagens
     if (produto.imagens && Array.isArray(produto.imagens)) {
-      this.imagens = produto.imagens.map(img => new ProdutoImagemResponseDto(img));
+      this.imagens = produto.imagens.map((img: any) => new ProdutoImagemResponseDto(img));
     } else {
       this.imagens = [];
     }
     
-    // ─── CAMPOS DE PROMOÇÃO ───
-    this.precoPromocional = produto.precoPromocional ? parseFloat(produto.precoPromocional) : undefined;
+    // ─── CAMPOS DE PROMOÇÃO (SNAKE_CASE) ───
+    this.preco_promocional = produto.preco_promocional ? 
+      (typeof produto.preco_promocional === 'number' ? produto.preco_promocional : parseFloat(produto.preco_promocional)) : 
+      undefined;
     this.desconto = produto.desconto || 0;
-    this.promocaoAtiva = produto.promocaoAtiva || false;
+    this.promocao_ativa = produto.promocao_ativa || false;
     
     this.createdAt = produto.createdAt;
     this.updatedAt = produto.updatedAt;
+  }
+}
+
+/**
+ * DTO para resposta de produto em promoção
+ */
+export class PromocaoProdutoDto {
+  id: string;
+  nome: string;
+  slug: string;
+  preco: number;
+  preco_promocional?: number;
+  desconto: number;
+  promocao_ativa: boolean;
+  imagemPrincipal?: string;
+  categoria: string;
+
+  constructor(produto: any) {
+    this.id = produto.id;
+    this.nome = produto.nome;
+    this.slug = produto.slug;
+    this.preco = typeof produto.preco === 'number' ? produto.preco : parseFloat(produto.preco);
+    this.preco_promocional = produto.preco_promocional ? 
+      (typeof produto.preco_promocional === 'number' ? produto.preco_promocional : parseFloat(produto.preco_promocional)) : 
+      undefined;
+    this.desconto = produto.desconto || 0;
+    this.promocao_ativa = produto.promocao_ativa || false;
+    this.categoria = produto.categoria;
+    
+    // Pega a imagem principal
+    if (produto.imagens && Array.isArray(produto.imagens)) {
+      const principal = produto.imagens.find((img: any) => img.isPrincipal);
+      this.imagemPrincipal = principal?.url || produto.imagens[0]?.url;
+    }
   }
 }
 
@@ -310,6 +409,15 @@ export class FilterProdutoDto {
   @IsArray({ message: 'Tamanhos deve ser um array' })
   tamanhos?: string[];
 
+  // ─── SUPORTE PARA AMBOS OS FORMATOS ───
+  @IsOptional()
+  @IsBoolean({ message: 'promocaoAtiva deve ser booleano' })
+  promocaoAtiva?: boolean;
+
+  @IsOptional()
+  @IsBoolean({ message: 'promocao_ativa deve ser booleano' })
+  promocao_ativa?: boolean;
+
   @IsOptional()
   @Type(() => Number)
   @Min(1, { message: 'Página deve ser no mínimo 1' })
@@ -357,6 +465,9 @@ export class BulkUpdateResponseDto {
   }>;
 
   constructor() {
+    this.total = 0;
+    this.sucesso = 0;
+    this.erro = 0;
     this.detalhes = [];
   }
 }

@@ -1,10 +1,17 @@
-// pedido.repository.ts - VERSÃO CORRIGIDA (sem campo 'imagem')
-
+// pedido.repository.ts
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Pedido, StatusPedido } from '@prisma/client';
 import { BaseRepository } from '../common/utils/baseRepository';
 import { Decimal } from '@prisma/client/runtime/library';
+
+const produtoSelect = {
+  id: true,
+  nome: true,
+  preco: true,
+  slug: true,
+  imagem: true,
+} as const;
 
 @Injectable()
 export class PedidoRepository extends BaseRepository<Pedido> {
@@ -16,8 +23,6 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     return this.prisma.pedido;
   }
 
-  // ========== MÉTODOS EXISTENTES ==========
-  
   async findByUser(userId: string, page?: number, limit?: number) {
     const skip = page && limit ? (page - 1) * limit : undefined;
     const take = limit;
@@ -28,47 +33,20 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       take,
       include: {
         itens: {
-          include: { 
-            produto: {
-              include: {
-                imagens: {
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         }
       },
       orderBy: { createdAt: 'desc' }
     });
   }
 
+  // ← NOVO: usado em pedidos.service.ts, não existia antes
   async findByIdAndUser(id: string, userId: string) {
     return this.model.findFirst({
       where: { id, userId },
       include: {
         itens: {
-          include: { 
-            produto: {
-              include: {
-                imagens: {
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
-        },
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-            cpf: true,
-          }
+          include: { produto: { select: produtoSelect } }
         }
       }
     });
@@ -79,24 +57,10 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       where: { numero },
       include: {
         itens: {
-          include: { 
-            produto: {
-              include: {
-                imagens: {
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         },
         user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-          }
+          select: { id: true, nome: true, email: true }
         }
       }
     });
@@ -126,13 +90,7 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       },
       include: {
         itens: true,
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-          }
-        }
+        user: { select: { id: true, nome: true, email: true } }
       }
     });
   }
@@ -145,10 +103,10 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     tamanho?: string | null;
     cor?: string | null;
   }) {
-    const precoUnitario = data.precoUnitario instanceof Decimal 
-      ? data.precoUnitario 
+    const precoUnitario = data.precoUnitario instanceof Decimal
+      ? data.precoUnitario
       : new Decimal(data.precoUnitario);
-    
+
     return this.prisma.pedidoItem.create({
       data: {
         pedidoId: data.pedidoId,
@@ -172,25 +130,9 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       data: updateData,
       include: {
         itens: {
-          include: { 
-            produto: {
-              include: {
-                imagens: {
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         },
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-          }
-        }
+        user: { select: { id: true, nome: true, email: true } }
       }
     });
   }
@@ -210,49 +152,20 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     return `PED-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
   }
 
-  // ========== MÉTODOS PARA ADMIN (CORRIGIDOS) ==========
-
-  /**
-   * Buscar pedido por ID sem restrição de usuário (para admin)
-   * CORRIGIDO - sem campo 'imagem'
-   */
   async findById(id: string) {
     return this.model.findUnique({
       where: { id },
       include: {
         itens: {
-          include: { 
-            produto: {
-              select: {
-                id: true,
-                nome: true,
-                preco: true,
-                slug: true,
-                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         },
         user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-            cpf: true,
-          }
+          select: { id: true, nome: true, email: true, cpf: true }
         }
       }
     });
   }
 
-  /**
-   * Buscar todos os pedidos com filtros e paginação (para admin)
-   * CORRIGIDO - sem campo 'imagem'
-   */
   async findAllWithFilters(where: any, skip: number, take: number) {
     return this.model.findMany({
       where,
@@ -260,45 +173,20 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       take,
       include: {
         itens: {
-          include: { 
-            produto: {
-              select: {
-                id: true,
-                nome: true,
-                preco: true,
-                slug: true,
-                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         },
         user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-            cpf: true,
-          }
+          select: { id: true, nome: true, email: true, cpf: true }
         }
       },
       orderBy: { createdAt: 'desc' }
     });
   }
 
-  /**
-   * Contar total de pedidos com filtros (para admin)
-   */
   async countAllWithFilters(where: any) {
     return this.model.count({ where });
   }
 
-  /**
-   * Buscar pedidos por status (para admin)
-   */
   async findByStatus(status: StatusPedido, page?: number, limit?: number) {
     const skip = page && limit ? (page - 1) * limit : undefined;
     const take = limit;
@@ -309,75 +197,32 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       take,
       include: {
         itens: {
-          include: { 
-            produto: {
-              include: {
-                imagens: {
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         },
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-          }
-        }
+        user: { select: { id: true, nome: true, email: true } }
       },
       orderBy: { createdAt: 'desc' }
     });
   }
 
-  /**
-   * Buscar pedidos por período (para admin)
-   */
   async findByPeriod(startDate: Date, endDate: Date, page?: number, limit?: number) {
     const skip = page && limit ? (page - 1) * limit : undefined;
     const take = limit;
 
     return this.model.findMany({
-      where: {
-        createdAt: {
-          gte: startDate,
-          lte: endDate,
-        }
-      },
+      where: { createdAt: { gte: startDate, lte: endDate } },
       skip,
       take,
       include: {
         itens: {
-          include: { 
-            produto: {
-              include: {
-                imagens: {
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         },
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-          }
-        }
+        user: { select: { id: true, nome: true, email: true } }
       },
       orderBy: { createdAt: 'desc' }
     });
   }
 
-  /**
-   * Buscar estatísticas de pedidos (para dashboard admin)
-   */
   async getOrderStats() {
     const [total, pending, paid, shipped, delivered, cancelled, totalValue] = await Promise.all([
       this.model.count(),
@@ -386,99 +231,42 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       this.model.count({ where: { status: 'enviado' } }),
       this.model.count({ where: { status: 'entregue' } }),
       this.model.count({ where: { status: 'cancelado' } }),
-      this.model.aggregate({
-        _sum: {
-          total: true
-        }
-      }),
+      this.model.aggregate({ _sum: { total: true } }),
     ]);
 
     return {
-      total,
-      pending,
-      paid,
-      shipped,
-      delivered,
-      cancelled,
+      total, pending, paid, shipped, delivered, cancelled,
       totalRevenue: totalValue._sum.total || 0,
     };
   }
 
-  /**
-   * Buscar pedidos recentes (para dashboard admin)
-   * CORRIGIDO - sem campo 'imagem'
-   */
   async findRecentOrders(limit: number = 10) {
     return this.model.findMany({
       take: limit,
       orderBy: { createdAt: 'desc' },
       include: {
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-          }
-        },
+        user: { select: { id: true, nome: true, email: true } },
         itens: {
           take: 3,
-          include: {
-            produto: {
-              select: {
-                nome: true,
-                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: { nome: true, imagem: true } } }
         }
       }
     });
   }
 
-  /**
-   * Atualizar código de rastreio de um pedido
-   */
   async updateRastreio(id: string, codigoRastreio: string) {
     return this.model.update({
       where: { id },
-      data: { 
-        codigoRastreio,
-        dataEnvio: new Date(),
-        status: 'enviado'
-      },
+      data: { codigoRastreio, dataEnvio: new Date(), status: 'enviado' },
       include: {
         itens: {
-          include: { 
-            produto: {
-              include: {
-                imagens: {
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         },
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-          }
-        }
+        user: { select: { id: true, nome: true, email: true } }
       }
     });
   }
 
-  /**
-   * Buscar pedidos por cliente (email, nome ou CPF)
-   * CORRIGIDO - sem campo 'imagem'
-   */
   async findByCliente(searchTerm: string, page?: number, limit?: number) {
     const skip = page && limit ? (page - 1) * limit : undefined;
     const take = limit;
@@ -495,39 +283,15 @@ export class PedidoRepository extends BaseRepository<Pedido> {
       skip,
       take,
       include: {
-        user: {
-          select: {
-            id: true,
-            nome: true,
-            email: true,
-            cpf: true,
-          }
-        },
+        user: { select: { id: true, nome: true, email: true, cpf: true } },
         itens: {
-          include: { 
-            produto: {
-              select: {
-                id: true,
-                nome: true,
-                preco: true,
-                slug: true,
-                imagens: {  // ← CORRIGIDO: imagens em vez de imagem
-                  where: { isPrincipal: true },
-                  take: 1,
-                  select: { url: true }
-                }
-              }
-            }
-          }
+          include: { produto: { select: produtoSelect } }
         }
       },
       orderBy: { createdAt: 'desc' }
     });
   }
 
-  /**
-   * Contar pedidos por status (para dashboard)
-   */
   async countByStatus() {
     const statuses = Object.values(StatusPedido);
     const counts = await Promise.all(
@@ -539,23 +303,13 @@ export class PedidoRepository extends BaseRepository<Pedido> {
     return counts;
   }
 
-  /**
-   * Buscar faturamento por período
-   */
   async getRevenueByPeriod(startDate: Date, endDate: Date) {
     const result = await this.model.aggregate({
       where: {
-        createdAt: {
-          gte: startDate,
-          lte: endDate,
-        },
-        status: {
-          not: 'cancelado'
-        }
+        createdAt: { gte: startDate, lte: endDate },
+        status: { not: 'cancelado' }
       },
-      _sum: {
-        total: true
-      },
+      _sum: { total: true },
       _count: true
     });
 

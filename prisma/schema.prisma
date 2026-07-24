@@ -1,19 +1,347 @@
-// schema.prisma
-
 generator client {
- provider      = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")  
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
-// ──────────────────────────────────────
-// ENUMS
-// ──────────────────────────────────────
+model User {
+  id                  String              @id @default(uuid())
+  nome                String
+  email               String              @unique
+  cpf                 String              @unique
+  senha               String
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  endereco            Json
+  role                Role                @default(USER)
+  emailVerified       Boolean             @default(false)
+  failedLoginAttempts Int                 @default(0)
+  lastLoginAt         DateTime?
+  lastLoginIp         String?
+  lockedUntil         DateTime?
+  phoneVerified       Boolean             @default(false)
+  twoFactorEnabled    Boolean             @default(false)
+  twoFactorSecret     String?
+  avaliacoes          Avaliacao[]
+  carrinho            CartItem[]
+  deviceFingerprints  DeviceFingerprint[]
+  metodosPagamento    MetodoPagamento[]
+  notificacoes        Notificacao[]
+  pagamentos          Pagamento[]
+  pedidos             Pedido[]
+  refreshTokens       RefreshToken[]
+  transacoes          Transacao[]
+
+  @@index([email])
+  @@index([cpf])
+  @@map("users")
+}
+
+model Produto {
+  id                String           @id @default(uuid())
+  nome              String
+  slug              String?          @unique
+  descricao         String?
+  preco             Decimal          @db.Decimal(10, 2)
+  imagem            String
+  categoria         CategoriaProduto
+  tag               String?
+  estoque           Int              @default(0)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  cores             Json             @default("[]")
+  tamanhos          Json             @default("[]")
+  preco_promocional Decimal?         @db.Decimal(10, 2)
+  desconto          Int?             @default(0)
+  promocao_ativa    Boolean?         @default(false)
+  avaliacoes        Avaliacao[]
+  cartItems         CartItem[]
+  pedidoItens       PedidoItem[]
+
+  @@index([categoria])
+  @@index([tag])
+  @@index([createdAt])
+  @@index([desconto], map: "idx_produtos_desconto")
+  @@index([preco_promocional], map: "idx_produtos_preco_promocional")
+  @@index([promocao_ativa], map: "idx_produtos_promocao_ativa")
+  @@map("produtos")
+}
+
+model CartItem {
+  id         String   @id @default(uuid())
+  quantidade Int      @default(1)
+  tamanho    String?
+  cor        String?
+  userId     String
+  produtoId  String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  produto    Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, produtoId, tamanho, cor])
+  @@index([userId])
+  @@index([produtoId])
+  @@map("cart_items")
+}
+
+model Pedido {
+  id              String       @id @default(uuid())
+  numero          String       @unique @default(cuid())
+  status          StatusPedido @default(pendente)
+  subtotal        Decimal      @db.Decimal(10, 2)
+  frete           Decimal      @default(0) @db.Decimal(10, 2)
+  imposto         Decimal      @default(0) @db.Decimal(10, 2)
+  total           Decimal      @db.Decimal(10, 2)
+  dataPagamento   DateTime?
+  dataEnvio       DateTime?
+  dataEntrega     DateTime?
+  codigoRastreio  String?
+  observacoes     String?
+  userId          String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  enderecoEntrega Json
+  pagamentos      Pagamento[]
+  itens           PedidoItem[]
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transacoes      Transacao[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([numero])
+  @@map("pedidos")
+}
+
+model PedidoItem {
+  id            String  @id @default(uuid())
+  quantidade    Int
+  precoUnitario Decimal @db.Decimal(10, 2)
+  tamanho       String?
+  cor           String?
+  pedidoId      String
+  produtoId     String
+  pedido        Pedido  @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produto       Produto @relation(fields: [produtoId], references: [id])
+
+  @@map("pedido_itens")
+}
+
+model MetodoPagamento {
+  id                  String        @id @default(uuid())
+  ultimosDigitos      String?
+  pagamentoDefault    Boolean       @default(false)
+  userId              String
+  createdAt           DateTime      @default(now())
+  dadosCriptografados Json?
+  deviceFingerprint   String?
+  ipAddress           String?
+  lastUsedAt          DateTime?
+  pixKey              String?
+  tokenCard           String?       @unique
+  tokenProvider       String?
+  updatedAt           DateTime      @updatedAt
+  userAgent           String?
+  tipo                TipoPagamento
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, pagamentoDefault])
+  @@index([tokenCard])
+  @@map("metodos_pagamento")
+}
+
+model Transacao {
+  id               String           @id @default(uuid())
+  transactionId    String           @unique
+  gateway          GatewayPagamento
+  tipo             TipoPagamento
+  valor            Decimal          @db.Decimal(10, 2)
+  status           StatusTransacao  @default(AGUARDANDO_PAGAMENTO)
+  pixQrCode        String?
+  pixQrCodeText    String?
+  pixExpiration    DateTime?
+  boletoUrl        String?
+  boletoBarcode    String?
+  boletoExpiration DateTime?
+  cardBrand        String?
+  installmentCount Int?             @default(1)
+  installmentValue Decimal?         @db.Decimal(10, 2)
+  paymentData      Json?
+  metadata         Json?
+  webhookUrl       String?
+  webhookSent      Boolean          @default(false)
+  webhookResponse  Json?
+  retryCount       Int              @default(0)
+  fraudScore       Float?
+  fraudAnalysis    Json?
+  riskLevel        String?
+  pedidoId         String
+  userId           String
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  paidAt           DateTime?
+  refundedAt       DateTime?
+  cancelledAt      DateTime?
+  chargebacks      Chargeback[]
+  pagamento        Pagamento?
+  pedido           Pedido           @relation(fields: [pedidoId], references: [id])
+  user             User             @relation(fields: [userId], references: [id])
+  webhookLogs      WebhookLog[]
+
+  @@index([status])
+  @@index([transactionId])
+  @@index([pedidoId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([fraudScore])
+  @@map("transacoes")
+}
+
+model Pagamento {
+  id             String           @id @default(uuid())
+  transacaoId    String           @unique
+  pedidoId       String
+  userId         String
+  valor          Decimal          @db.Decimal(10, 2)
+  tipo           TipoPagamento
+  status         StatusTransacao
+  gateway        GatewayPagamento
+  paymentDetails Json?
+  receiptUrl     String?
+  invoiceUrl     String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  pedido         Pedido           @relation(fields: [pedidoId], references: [id])
+  transacao      Transacao        @relation(fields: [transacaoId], references: [id])
+  user           User             @relation(fields: [userId], references: [id])
+
+  @@index([pedidoId])
+  @@index([userId])
+  @@index([status])
+  @@map("pagamentos")
+}
+
+model Chargeback {
+  id            String    @id @default(uuid())
+  transacaoId   String
+  motivo        String
+  valor         Decimal   @db.Decimal(10, 2)
+  status        String
+  evidencias    Json?
+  dataAbertura  DateTime  @default(now())
+  dataResolucao DateTime?
+  transacao     Transacao @relation(fields: [transacaoId], references: [id])
+
+  @@map("chargebacks")
+}
+
+model WebhookLog {
+  id           String    @id @default(uuid())
+  transacaoId  String
+  url          String
+  payload      Json
+  response     Json?
+  statusCode   Int
+  attemptCount Int
+  error        String?
+  createdAt    DateTime  @default(now())
+  transacao    Transacao @relation(fields: [transacaoId], references: [id])
+
+  @@index([transacaoId])
+  @@index([createdAt])
+  @@map("webhook_logs")
+}
+
+model DeviceFingerprint {
+  id               String   @id @default(uuid())
+  userId           String
+  fingerprint      String   @unique
+  ipAddress        String
+  userAgent        String
+  acceptLanguage   String?
+  platform         String?
+  screenResolution String?
+  timezone         String?
+  isTrusted        Boolean  @default(false)
+  trustScore       Float    @default(0)
+  lastSeenAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([fingerprint])
+  @@map("device_fingerprints")
+}
+
+model Avaliacao {
+  id         String   @id @default(uuid())
+  nota       Int
+  titulo     String?
+  comentario String?
+  userId     String
+  produtoId  String
+  createdAt  DateTime @default(now())
+  produto    Produto  @relation(fields: [produtoId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, produtoId])
+  @@index([produtoId, nota])
+  @@map("avaliacoes")
+}
+
+model Notificacao {
+  id        String          @id @default(uuid())
+  tipo      TipoNotificacao
+  titulo    String
+  mensagem  String
+  lida      Boolean         @default(false)
+  userId    String
+  createdAt DateTime        @default(now())
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([lida])
+  @@index([createdAt])
+  @@map("notificacoes")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+model SecurityLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  ipAddress  String
+  userAgent  String
+  status     String
+  severity   String
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([severity])
+  @@map("security_logs")
+}
 
 enum Role {
   USER
@@ -62,468 +390,8 @@ enum GatewayPagamento {
   BOLETO_DIRETO
 }
 
-// ──────────────────────────────────────
-// USUÁRIO
-// ──────────────────────────────────────
-
-model User {
-  id              String            @id @default(uuid())
-  nome            String
-  role            Role              @default(USER)
-  email           String            @unique
-  cpf             String            @unique
-  endereco        Json
-  senha           String
-  
-  // Configurações de segurança
-  twoFactorSecret String?
-  twoFactorEnabled Boolean           @default(false)
-  emailVerified   Boolean           @default(false)
-  phoneVerified   Boolean           @default(false)
-  
-  // Rate limiting e segurança
-  failedLoginAttempts Int           @default(0)
-  lockedUntil      DateTime?
-  lastLoginAt      DateTime?
-  lastLoginIp      String?
-  
-  // Relacionamentos
-  carrinho        CartItem[]
-  pedidos         Pedido[]
-  notificacoes    Notificacao[]
-  metodosPagamento MetodoPagamento[]
-  avaliacoes      Avaliacao[]
-  refreshTokens   RefreshToken[]
-  pagamentos      Pagamento[]
-  transacoes      Transacao[]
-  deviceFingerprints DeviceFingerprint[]
-  
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-
-  @@index([email])
-  @@index([cpf])
-  @@map("users")
-}
-
-// ──────────────────────────────────────
-// PRODUTOS (MODIFICADO)
-// ──────────────────────────────────────
-
-model Produto {
-  id                String           @id @default(uuid())
-  nome              String
-  slug              String?          @unique
-  descricao         String?
-  preco             Decimal          @db.Decimal(10, 2)
-  precoPromocional  Decimal?         @db.Decimal(10, 2)   // ← NOVO
-  desconto          Int?             @default(0)          // ← NOVO
-  promocaoAtiva     Boolean          @default(false)       // ← NOVO
-  categoria         String
-  tag               String?
-  estoque           Int              @default(0)
-  cores             Json             @default("[]")
-  tamanhos          Json             @default("[]")
-  cartItems         CartItem[]
-  pedidoItens       PedidoItem[]
-  avaliacoes        Avaliacao[]
-  imagens           ProdutoImagem[]
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  deletedAt         DateTime?
-
-  @@index([categoria])
-  @@index([tag])
-  @@index([createdAt])
-  @@map("produtos")
-}
-
-// ──────────────────────────────────────
-// NOVO MODEL: IMAGENS DO PRODUTO
-// ──────────────────────────────────────
-
-model ProdutoImagem {
-  id            String   @id @default(uuid())
-  url           String   // URL da imagem no Supabase Storage
-  altText       String?  // Texto alternativo para SEO
-  ordem         Int      @default(0) // Ordem de exibição
-  isPrincipal   Boolean  @default(false) // Se é a imagem principal do produto
-  
-  produtoId     String
-  produto       Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
-  
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([produtoId])
-  @@index([ordem])
-  @@index([isPrincipal])
-  @@map("produto_imagens")
-}
-
-// ──────────────────────────────────────
-// CARRINHO
-// ──────────────────────────────────────
-
-model CartItem {
-  id         String   @id @default(uuid())
-  quantidade Int      @default(1)
-  tamanho    String?
-  cor        String?
-  
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  produtoId  String
-  produto    Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
-  
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  
-  @@unique([userId, produtoId, tamanho, cor])
-  @@index([userId])
-  @@index([produtoId])
-  @@map("cart_items")
-}
-
-// ──────────────────────────────────────
-// PEDIDOS
-// ──────────────────────────────────────
-
-model Pedido {
-  id              String         @id @default(uuid())
-  numero          String         @unique @default(cuid())
-  status          StatusPedido   @default(pendente)
-  subtotal        Decimal        @db.Decimal(10, 2)
-  frete           Decimal        @db.Decimal(10, 2) @default(0)
-  imposto         Decimal        @db.Decimal(10, 2) @default(0)
-  total           Decimal        @db.Decimal(10, 2)
-  
-  enderecoEntrega Json
-  
-  dataPagamento   DateTime?
-  dataEnvio       DateTime?
-  dataEntrega     DateTime?
-  codigoRastreio  String?
-  observacoes     String?
-  
-  userId          String
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  itens           PedidoItem[]
-  pagamentos      Pagamento[]
-  transacoes      Transacao[]
-  
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  @@index([userId])
-  @@index([status])
-  @@index([createdAt])
-  @@index([numero])
-  @@map("pedidos")
-}
-
-// ──────────────────────────────────────
-// ITENS DO PEDIDO
-// ──────────────────────────────────────
-
-model PedidoItem {
-  id             String   @id @default(uuid())
-  quantidade     Int
-  precoUnitario  Decimal  @db.Decimal(10, 2)
-  tamanho        String?
-  cor            String?
-  
-  pedidoId       String
-  pedido         Pedido   @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
-  
-  produtoId      String
-  produto        Produto  @relation(fields: [produtoId], references: [id])
-  
-  @@map("pedido_itens")
-}
-
-// ──────────────────────────────────────
-// MÉTODOS DE PAGAMENTO (Seguro)
-// ──────────────────────────────────────
-
-model MetodoPagamento {
-  id                   String   @id @default(uuid())
-  tipo                 TipoPagamento
-  ultimosDigitos       String?
-  pagamentoDefault     Boolean  @default(false)
-  
-  // Dados criptografados
-  dadosCriptografados  Json?    // Dados do cartão criptografados
-  tokenCard           String?   @unique // Token do cartão (PCI compliant)
-  tokenProvider       String?   // Stripe, MercadoPago, etc
-  
-  // Para PIX
-  pixKey              String?   // Chave PIX criptografada
-  
-  userId               String
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  // Metadados de segurança
-  deviceFingerprint   String?
-  ipAddress           String?
-  userAgent           String?
-  lastUsedAt          DateTime?
-  
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  
-  @@index([userId, pagamentoDefault])
-  @@index([tokenCard])
-  @@map("metodos_pagamento")
-}
-
-// ──────────────────────────────────────
-// TRANSAÇÕES (Core do sistema de pagamento)
-// ──────────────────────────────────────
-
-model Transacao {
-  id                  String         @id @default(uuid())
-  transactionId       String         @unique  // ID do gateway
-  gateway             GatewayPagamento
-  tipo                TipoPagamento
-  valor               Decimal        @db.Decimal(10, 2)
-  status              StatusTransacao @default(AGUARDANDO_PAGAMENTO)
-  
-  // Para PIX
-  pixQrCode           String?        @db.Text  // QR Code base64
-  pixQrCodeText       String?        @db.Text  // Código copia e cola
-  pixExpiration       DateTime?       // Expiração do PIX
-  
-  // Para Boleto
-  boletoUrl           String?
-  boletoBarcode       String?
-  boletoExpiration    DateTime?
-  
-  // Para Cartão
-  cardBrand           String?
-  installmentCount    Int?           @default(1)
-  installmentValue    Decimal?       @db.Decimal(10, 2)
-  
-  // Dados do pagamento
-  paymentData         Json?          // Dados adicionais do gateway
-  metadata            Json?          // Metadados diversos
-  
-  // Webhooks e segurança
-  webhookUrl          String?
-  webhookSent         Boolean        @default(false)
-  webhookResponse     Json?
-  retryCount          Int            @default(0)
-  
-  // Prevenção de fraude
-  fraudScore          Float?         // Score de fraude (0-1)
-  fraudAnalysis       Json?          // Análise detalhada
-  riskLevel           String?        // BAIXO, MEDIO, ALTO, CRITICO
-  
-  // Relacionamentos
-  pedidoId            String
-  pedido              Pedido         @relation(fields: [pedidoId], references: [id])
-  userId              String
-  user                User           @relation(fields: [userId], references: [id])
-  pagamento           Pagamento?     @relation
-  chargebacks         Chargeback[]
-  webhookLogs         WebhookLog[]
-  
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-  paidAt              DateTime?
-  refundedAt          DateTime?
-  cancelledAt         DateTime?
-
-  @@index([status])
-  @@index([transactionId])
-  @@index([pedidoId])
-  @@index([userId])
-  @@index([createdAt])
-  @@index([fraudScore])
-  @@map("transacoes")
-}
-
-// ──────────────────────────────────────
-// PAGAMENTOS (Histórico)
-// ──────────────────────────────────────
-
-model Pagamento {
-  id                String        @id @default(uuid())
-  transacaoId       String        @unique
-  transacao         Transacao     @relation(fields: [transacaoId], references: [id])
-  pedidoId          String
-  pedido            Pedido        @relation(fields: [pedidoId], references: [id])
-  userId            String
-  user              User          @relation(fields: [userId], references: [id])
-  
-  valor             Decimal       @db.Decimal(10, 2)
-  tipo              TipoPagamento
-  status            StatusTransacao
-  gateway           GatewayPagamento
-  
-  // Detalhes do pagamento
-  paymentDetails    Json?
-  receiptUrl        String?
-  invoiceUrl        String?
-  
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-
-  @@index([pedidoId])
-  @@index([userId])
-  @@index([status])
-  @@map("pagamentos")
-}
-
-// ──────────────────────────────────────
-// CHARGEBACKS (Contestações)
-// ──────────────────────────────────────
-
-model Chargeback {
-  id                String        @id @default(uuid())
-  transacaoId       String
-  transacao         Transacao     @relation(fields: [transacaoId], references: [id])
-  motivo            String
-  valor             Decimal       @db.Decimal(10, 2)
-  status            String        // ABERTO, EM_ANALISE, APROVADO, NEGADO
-  evidencias        Json?
-  dataAbertura      DateTime      @default(now())
-  dataResolucao     DateTime?
-  
-  @@map("chargebacks")
-}
-
-// ──────────────────────────────────────
-// LOGS DE WEBHOOK
-// ──────────────────────────────────────
-
-model WebhookLog {
-  id                String        @id @default(uuid())
-  transacaoId       String
-  transacao         Transacao     @relation(fields: [transacaoId], references: [id])
-  url               String
-  payload           Json
-  response          Json?
-  statusCode        Int
-  attemptCount      Int
-  error             String?
-  createdAt         DateTime      @default(now())
-  
-  @@index([transacaoId])
-  @@index([createdAt])
-  @@map("webhook_logs")
-}
-
-// ──────────────────────────────────────
-// FINGERPRINT DE DISPOSITIVO (Anti-fraude)
-// ──────────────────────────────────────
-
-model DeviceFingerprint {
-  id                String        @id @default(uuid())
-  userId            String
-  user              User          @relation(fields: [userId], references: [id])
-  
-  fingerprint       String        @unique
-  ipAddress         String
-  userAgent         String
-  acceptLanguage    String?
-  platform          String?
-  screenResolution  String?
-  timezone          String?
-  
-  // Metadados
-  isTrusted         Boolean       @default(false)
-  trustScore        Float         @default(0)
-  lastSeenAt        DateTime      @default(now())
-  
-  createdAt         DateTime      @default(now())
-  
-  @@index([userId])
-  @@index([fingerprint])
-  @@map("device_fingerprints")
-}
-
-// ──────────────────────────────────────
-// AVALIAÇÕES
-// ──────────────────────────────────────
-
-model Avaliacao {
-  id          String   @id @default(uuid())
-  nota        Int
-  titulo      String?
-  comentario  String?
-  
-  userId      String
-  user        User     @relation(fields: [userId], references: [id])
-  produtoId   String
-  produto     Produto  @relation(fields: [produtoId], references: [id])
-  
-  createdAt   DateTime @default(now())
-  
-  @@unique([userId, produtoId])
-  @@index([produtoId, nota])
-  @@map("avaliacoes")
-}
-
-// ──────────────────────────────────────
-// NOTIFICAÇÕES
-// ──────────────────────────────────────
-
-model Notificacao {
-  id        String           @id @default(uuid())
-  tipo      TipoNotificacao
-  titulo    String
-  mensagem  String
-  lida      Boolean          @default(false)
-  
-  userId    String
-  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime         @default(now())
-
-  @@index([userId])
-  @@index([lida])
-  @@index([createdAt])
-  @@map("notificacoes")
-}
-
-// ──────────────────────────────────────
-// REFRESH TOKENS
-// ──────────────────────────────────────
-
-model RefreshToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  revoked   Boolean  @default(false)
-  
-  @@map("refresh_tokens")
-}
-
-// ──────────────────────────────────────
-// LOGS DE SEGURANÇA
-// ──────────────────────────────────────
-
-model SecurityLog {
-  id          String   @id @default(uuid())
-  userId      String?
-  action      String
-  entityType  String
-  entityId    String?
-  details     Json?
-  ipAddress   String
-  userAgent   String
-  status      String   // SUCCESS, FAILURE, BLOCKED
-  severity    String   // LOW, MEDIUM, HIGH, CRITICAL
-  
-  createdAt   DateTime @default(now())
-  
-  @@index([userId])
-  @@index([action])
-  @@index([createdAt])
-  @@index([severity])
-  @@map("security_logs")
+enum CategoriaProduto {
+  Feminino
+  Masculino
+  Acessorios
 }

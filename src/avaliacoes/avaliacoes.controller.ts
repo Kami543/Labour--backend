@@ -12,6 +12,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -31,6 +32,8 @@ import { AuthGuard } from '@nestjs/passport';
 @ApiBearerAuth('access-token')
 @Controller('avaliacoes')
 export class AvaliacoesController {
+  private readonly logger = new Logger(AvaliacoesController.name);
+
   constructor(private readonly avaliacoesService: AvaliacoesService) {}
 
   @Post()
@@ -47,7 +50,21 @@ export class AvaliacoesController {
   @ApiResponse({ status: 404, description: 'Produto não encontrado' })
   async create(@Req() req: any, @Body() createAvaliacaoDto: CreateAvaliacaoDto) {
     const userId = req.user.userId;
-    return this.avaliacoesService.create(userId, createAvaliacaoDto);
+    this.logger.log(`🔄 Criando avaliação para usuário: ${userId}, produto: ${createAvaliacaoDto.produtoId}`);
+    this.logger.debug(`📊 Parâmetros: userId=${userId}, produtoId=${createAvaliacaoDto.produtoId}`);
+    this.logger.debug(`📦 Dados da avaliação: ${JSON.stringify(createAvaliacaoDto)}`);
+    this.logger.debug(`👤 Usuário: ${JSON.stringify(req.user)}`);
+    
+    try {
+      const result = await this.avaliacoesService.create(userId, createAvaliacaoDto);
+      this.logger.log(`✅ Avaliação criada com sucesso! ID: ${result?.id || 'N/A'}`);
+      this.logger.debug(`📦 Avaliação criada: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao criar avaliação para usuário ${userId}, produto ${createAvaliacaoDto.produtoId}: ${error.message}`);
+      this.logger.debug(`🔍 Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 
   @Get('produto/:produtoId')
@@ -64,7 +81,23 @@ export class AvaliacoesController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.avaliacoesService.findByProduto(produtoId, page, limit);
+    const pageNum = page || 1;
+    const limitNum = limit || 10;
+    
+    this.logger.log(`🔄 Buscando avaliações do produto: ${produtoId} - Página: ${pageNum}, Limite: ${limitNum}`);
+    this.logger.debug(`📊 Parâmetros: produtoId=${produtoId}, page=${page}, limit=${limit}`);
+    
+    try {
+      const result = await this.avaliacoesService.findByProduto(produtoId, pageNum, limitNum);
+      const count = Array.isArray(result) ? result.length : ((result as any)?.data?.length || 0);
+      this.logger.log(`✅ Encontradas ${count} avaliações para o produto ${produtoId}`);
+      this.logger.debug(`📦 Resultado: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao buscar avaliações do produto ${produtoId}: ${error.message}`);
+      this.logger.debug(`🔍 Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 
   @Get('produto/:produtoId/rating')
@@ -82,7 +115,19 @@ export class AvaliacoesController {
     }
   })
   async getProdutoRating(@Param('produtoId') produtoId: string) {
-    return this.avaliacoesService.getProdutoRating(produtoId);
+    this.logger.log(`🔄 Buscando média de avaliações do produto: ${produtoId}`);
+    this.logger.debug(`📊 Parâmetros: produtoId=${produtoId}`);
+    
+    try {
+      const result = await this.avaliacoesService.getProdutoRating(produtoId);
+      this.logger.log(`✅ Média calculada para o produto ${produtoId}: ${result?.media || 0} (${result?.totalAvaliacoes || 0} avaliações)`);
+      this.logger.debug(`📦 Resultado: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao buscar média de avaliações do produto ${produtoId}: ${error.message}`);
+      this.logger.debug(`🔍 Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 
   @Get('minhas-avaliacoes')
@@ -95,7 +140,21 @@ export class AvaliacoesController {
   @ApiResponse({ status: 401, description: 'Não autorizado' })
   async findUserAvaliacoes(@Req() req: any) {
     const userId = req.user.userId;
-    return this.avaliacoesService.findUserAvaliacoes(userId);
+    this.logger.log(`🔄 Buscando avaliações do usuário: ${userId}`);
+    this.logger.debug(`📊 Parâmetros: userId=${userId}`);
+    this.logger.debug(`👤 Usuário: ${JSON.stringify(req.user)}`);
+    
+    try {
+      const result = await this.avaliacoesService.findUserAvaliacoes(userId);
+      const count = Array.isArray(result) ? result.length : ((result as any)?.data?.length || 0);
+      this.logger.log(`✅ Encontradas ${count} avaliações para o usuário ${userId}`);
+      this.logger.debug(`📦 Resultado: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao buscar avaliações do usuário ${userId}: ${error.message}`);
+      this.logger.debug(`🔍 Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 
   @Put(':id')
@@ -115,7 +174,21 @@ export class AvaliacoesController {
     @Body() updateAvaliacaoDto: UpdateAvaliacaoDto,
   ) {
     const userId = req.user.userId;
-    return this.avaliacoesService.update(userId, id, updateAvaliacaoDto);
+    this.logger.log(`🔄 Atualizando avaliação ID: ${id} para usuário: ${userId}`);
+    this.logger.debug(`📊 Parâmetros: userId=${userId}, id=${id}`);
+    this.logger.debug(`📦 Dados de atualização: ${JSON.stringify(updateAvaliacaoDto)}`);
+    this.logger.debug(`👤 Usuário: ${JSON.stringify(req.user)}`);
+    
+    try {
+      const result = await this.avaliacoesService.update(userId, id, updateAvaliacaoDto);
+      this.logger.log(`✅ Avaliação ${id} atualizada com sucesso para usuário ${userId}`);
+      this.logger.debug(`📦 Avaliação atualizada: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao atualizar avaliação ${id} para usuário ${userId}: ${error.message}`);
+      this.logger.debug(`🔍 Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 
   @Delete(':id')
@@ -128,6 +201,19 @@ export class AvaliacoesController {
   @ApiResponse({ status: 404, description: 'Avaliação não encontrada' })
   async delete(@Req() req: any, @Param('id') id: string) {
     const userId = req.user.userId;
-    return this.avaliacoesService.delete(userId, id);
+    this.logger.log(`🔄 Deletando avaliação ID: ${id} para usuário: ${userId}`);
+    this.logger.debug(`📊 Parâmetros: userId=${userId}, id=${id}`);
+    this.logger.debug(`👤 Usuário: ${JSON.stringify(req.user)}`);
+    
+    try {
+      const result = await this.avaliacoesService.delete(userId, id);
+      this.logger.log(`✅ Avaliação ${id} deletada com sucesso para usuário ${userId}`);
+      this.logger.debug(`📦 Resultado: ${JSON.stringify(result)}`);
+      return result;
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao deletar avaliação ${id} para usuário ${userId}: ${error.message}`);
+      this.logger.debug(`🔍 Stack trace: ${error.stack}`);
+      throw error;
+    }
   }
 }

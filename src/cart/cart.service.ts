@@ -63,19 +63,18 @@ export class CartService {
     return this.getCart(userId);
   }
 
+  
+       
   async getCart(userId: string) {
     const cartItems = await this.cartRepository.findCartByUser(userId);
-    
+  
     const total = cartItems.reduce((sum, item) => {
       return sum + (Number(item.produto.preco) * item.quantidade);
     }, 0);
-
+  
     const itemCount = cartItems.reduce((sum, item) => sum + item.quantidade, 0);
-
+  
     const formattedItems = cartItems.map(item => {
-      const imagemPrincipal = item.produto.imagens?.find(img => img.isPrincipal) 
-                            || item.produto.imagens?.[0];
-      
       return {
         id: item.id,
         quantidade: item.quantidade,
@@ -87,17 +86,11 @@ export class CartService {
           preco: Number(item.produto.preco),
           slug: item.produto.slug,
           categoria: item.produto.categoria,
-          imagem: imagemPrincipal?.url || null,
-          imagens: item.produto.imagens?.map(img => ({
-            id: img.id,
-            url: img.url,
-            isPrincipal: img.isPrincipal,
-            ordem: img.ordem
-          })) || [],
+          imagem: item.produto.imagem,
         }
       };
     });
-
+  
     return {
       items: formattedItems,
       total: Number(total.toFixed(2)),

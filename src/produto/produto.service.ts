@@ -1,4 +1,4 @@
-// src/produto/produto.service.ts - VERSÃO COMPLETA CORRIGIDA COM PROMOÇÃO
+// src/produto/produto.service.ts - VERSÃO COMPLETA CORRIGIDA
 import { Injectable, Logger, NotFoundException, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { ProdutoRepository } from './produto.repository';
 import { 
@@ -6,8 +6,6 @@ import {
   UpdateProdutoDto, 
   ProdutoResponseDto, 
   ProdutoDetailResponseDto, 
-  CreateProdutoImagemDto, 
-  ProdutoImagemResponseDto,
   FilterProdutoDto,
   UpdatePromocaoDto,
   PromocaoProdutoDto,
@@ -17,6 +15,7 @@ import { slugify } from '../common/utils/slugify';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificacoesService } from '../notificacoes/notificacoes.service';
 import { UserRepository } from '../users/users.repository';
+import { CategoriaProduto } from '@prisma/client';
 
 @Injectable()
 export class ProdutoService {
@@ -47,43 +46,43 @@ export class ProdutoService {
       throw new BadRequestException('Já existe um produto com este nome');
     }
     
+    // Converte categoria para enum
+    const categoriaEnum = this.getCategoriaEnum(createProdutoDto.categoria);
+    
+    // Pega a primeira imagem como principal
+    const imagemPrincipal = createProdutoDto.imagens && createProdutoDto.imagens.length > 0
+      ? createProdutoDto.imagens[0].url
+      : '';
+
     const data = {
       nome: createProdutoDto.nome.trim(),
       slug,
       descricao: createProdutoDto.descricao?.trim() || '',
       preco: createProdutoDto.preco,
-      categoria: createProdutoDto.categoria || 'geral',
+      imagem: imagemPrincipal,
+      categoria: categoriaEnum,
       tag: createProdutoDto.tag || 'novo',
       estoque: Math.max(0, createProdutoDto.estoque || 0),
       cores: JSON.stringify(createProdutoDto.cores || []),
       tamanhos: JSON.stringify(createProdutoDto.tamanhos || []),
-      // ─── CAMPOS DE PROMOÇÃO ───
-      precoPromocional: createProdutoDto.precoPromocional || null,
+      // ─── CAMPOS DE PROMOÇÃO (SNAKE_CASE) ───
+      preco_promocional: createProdutoDto.preco_promocional || createProdutoDto.precoPromocional || null,
       desconto: createProdutoDto.desconto || 0,
-      promocaoAtiva: createProdutoDto.promocaoAtiva || false,
+      promocao_ativa: createProdutoDto.promocao_ativa || createProdutoDto.promocaoAtiva || false,
     };
 
-    const imagens = (createProdutoDto.imagens || [])
-      .slice(0, 10)
-      .map((img, index) => ({
-        url: img.url,
-        altText: img.altText || createProdutoDto.nome,
-        ordem: img.ordem !== undefined ? img.ordem : index,
-        isPrincipal: img.isPrincipal || index === 0
-      }));
-
-    const produto = await this.produtoRepository.createWithImages(data, imagens);
+    const produto = await this.produtoRepository.create(data);
     this.logger.log(`Produto criado com ID: ${produto.id}`);
     
     // ─── NOTIFICA SOBRE PROMOÇÃO SE ATIVA ───
-    if (produto.promocaoAtiva && produto.desconto > 0) {
+    if (produto.promocao_ativa && produto.desconto > 0) {
       this.notifyPromotion(produto.id, produto.desconto).catch(err => 
-        this.logger.error(`Erro ao notificar promoção: ${err.message}`)
+        this.logger.error(`Erro ao notificar promoção: ${err instanceof Error ? err.message : String(err)}`)
       );
     }
     
     this.notifyClientsAboutNewProduct(produto).catch(err => 
-      this.logger.error(`Erro ao notificar: ${err.message}`)
+      this.logger.error(`Erro ao notificar: ${err instanceof Error ? err.message : String(err)}`)
     );
     
     return new ProdutoResponseDto(produto);
@@ -98,7 +97,6 @@ export class ProdutoService {
     const result = await this.produtoRepository.findAll({
       page: safePage,
       limit: safeLimit,
-      where: { deletedAt: null }
     });
     
     return {
@@ -109,15 +107,17 @@ export class ProdutoService {
     };
   }
 
-  // ─── NOVO: BUSCAR COM FILTROS AVANÇADOS ───
+  // ─── BUSCAR COM FILTROS AVANÇADOS ───
   async findWithFilters(filterDto: FilterProdutoDto): Promise<{ data: ProdutoResponseDto[]; total: number; page: number; limit: number }> {
     this.logger.log('Buscando produtos com filtros...');
     
+    const categoria = filterDto.categoria ? this.getCategoriaEnum(filterDto.categoria) : undefined;
+    
     const result = await this.produtoRepository.findWithFilters({
-      categoria: filterDto.categoria,
+      categoria,
       precoMin: filterDto.precoMin,
       precoMax: filterDto.precoMax,
-      emPromocao: filterDto.promocaoAtiva,
+      emPromocao: filterDto.promocao_ativa || filterDto.promocaoAtiva,
       tag: filterDto.tag,
       busca: filterDto.busca,
       page: filterDto.page || 1,
@@ -132,7 +132,7 @@ export class ProdutoService {
     };
   }
 
-  // ─── NOVO: BUSCAR PRODUTOS EM PROMOÇÃO ───
+  // ─── BUSCAR PRODUTOS EM PROMOÇÃO ───
   async findEmPromocao(): Promise<PromocaoProdutoDto[]> {
     const cacheKey = 'produtos:promocao';
     const cached = this.getFromCache(cacheKey);
@@ -149,7 +149,7 @@ export class ProdutoService {
     return response;
   }
 
-  // ─── NOVO: BUSCAR MAIORES DESCONTOS ───
+  // ─── BUSCAR MAIORES DESCONTOS ───
   async findMaioresDescontos(limit: number = 10): Promise<PromocaoProdutoDto[]> {
     const safeLimit = Math.min(limit, 30);
     const cacheKey = `produtos:maiores-descontos:${safeLimit}`;
@@ -179,7 +179,7 @@ export class ProdutoService {
       return new ProdutoResponseDto(cached);
     }
     
-    const produto = await this.produtoRepository.findByIdWithImages(id);
+    const produto = await this.produtoRepository.findById(id);
     if (!produto) {
       throw new NotFoundException('Produto não encontrado');
     }
@@ -197,7 +197,7 @@ export class ProdutoService {
     this.logger.log(`Buscando detalhes do produto com ID: ${id}`);
     
     const [produto, avaliacaoMedia, totalAvaliacoes] = await Promise.all([
-      this.produtoRepository.findByIdWithImages(id),
+      this.produtoRepository.findById(id),
       this.produtoRepository.getAvaliacaoMedia(id).catch(() => 0),
       this.produtoRepository.countAvaliacoes(id).catch(() => 0)
     ]);
@@ -247,11 +247,13 @@ export class ProdutoService {
     
     this.logger.log(`Buscando produtos por categoria: ${categoria}`);
     
+    const categoriaEnum = this.getCategoriaEnum(categoria);
+    
     const safeLimit = Math.min(limit, 50);
     const safePage = Math.max(1, page);
     const skip = (safePage - 1) * safeLimit;
     
-    const allProdutos = await this.produtoRepository.findByCategoria(categoria);
+    const allProdutos = await this.produtoRepository.findByCategoria(categoriaEnum);
     const paginatedData = allProdutos.slice(skip, skip + safeLimit);
     
     return {
@@ -356,7 +358,7 @@ export class ProdutoService {
     return similares.map(produto => new ProdutoResponseDto(produto));
   }
 
-  // ─── UPDATE COMPLETO COM CAMPOS DE PROMOÇÃO ───
+  // ─── UPDATE COMPLETO ───
   async update(id: string, updateProdutoDto: UpdateProdutoDto): Promise<ProdutoResponseDto> {
     if (!this.isValidId(id)) {
       throw new BadRequestException('ID inválido');
@@ -369,9 +371,7 @@ export class ProdutoService {
       throw new NotFoundException('Produto não encontrado');
     }
 
-    // Busca o produto atual para comparar mudanças na promoção
     const produtoAtual = await this.produtoRepository.findById(id);
-
     const updateData: any = {};
 
     // Campos básicos
@@ -386,7 +386,7 @@ export class ProdutoService {
       updateData.preco = updateProdutoDto.preco;
     }
     if (updateProdutoDto.categoria !== undefined) {
-      updateData.categoria = updateProdutoDto.categoria;
+      updateData.categoria = this.getCategoriaEnum(updateProdutoDto.categoria);
     }
     if (updateProdutoDto.tag !== undefined) {
       updateData.tag = updateProdutoDto.tag;
@@ -401,13 +401,19 @@ export class ProdutoService {
       updateData.tamanhos = JSON.stringify(updateProdutoDto.tamanhos);
     }
 
-    // ─── CAMPOS DE PROMOÇÃO ───
-    if (updateProdutoDto.promocaoAtiva !== undefined) {
-      updateData.promocaoAtiva = updateProdutoDto.promocaoAtiva;
+    // ─── CAMPOS DE PROMOÇÃO (SNAKE_CASE) ───
+    if (updateProdutoDto.promocao_ativa !== undefined) {
+      updateData.promocao_ativa = updateProdutoDto.promocao_ativa;
+    } else if (updateProdutoDto.promocaoAtiva !== undefined) {
+      updateData.promocao_ativa = updateProdutoDto.promocaoAtiva;
     }
-    if (updateProdutoDto.precoPromocional !== undefined) {
-      updateData.precoPromocional = updateProdutoDto.precoPromocional;
+    
+    if (updateProdutoDto.preco_promocional !== undefined) {
+      updateData.preco_promocional = updateProdutoDto.preco_promocional;
+    } else if (updateProdutoDto.precoPromocional !== undefined) {
+      updateData.preco_promocional = updateProdutoDto.precoPromocional;
     }
+    
     if (updateProdutoDto.desconto !== undefined) {
       updateData.desconto = updateProdutoDto.desconto;
     }
@@ -428,21 +434,21 @@ export class ProdutoService {
 
     // ─── DISPARA NOTIFICAÇÃO SE PROMOÇÃO FOI ATIVADA ───
     const promoFoiAtivada = 
-      updateProdutoDto.promocaoAtiva === true &&
-      !produtoAtual?.promocaoAtiva &&
-      (updateProdutoDto.desconto || produtoAtual?.desconto || 0) > 0;
+      (updateData.promocao_ativa === true) &&
+      !produtoAtual?.promocao_ativa &&
+      (updateData.desconto || produtoAtual?.desconto || 0) > 0;
 
     if (promoFoiAtivada) {
-      const descontoFinal = updateProdutoDto.desconto || produtoAtual?.desconto || 0;
+      const descontoFinal = updateData.desconto || produtoAtual?.desconto || 0;
       this.notifyPromotion(id, descontoFinal).catch(err =>
-        this.logger.error(`Erro ao notificar promoção: ${err.message}`)
+        this.logger.error(`Erro ao notificar promoção: ${err instanceof Error ? err.message : String(err)}`)
       );
     }
     
     return new ProdutoResponseDto(updatedProduto);
   }
 
-  // ─── NOVO: ATUALIZAR APENAS PROMOÇÃO ───
+  // ─── ATUALIZAR APENAS PROMOÇÃO ───
   async updatePromocao(id: string, updatePromocaoDto: UpdatePromocaoDto): Promise<ProdutoResponseDto> {
     if (!this.isValidId(id)) {
       throw new BadRequestException('ID inválido');
@@ -460,18 +466,27 @@ export class ProdutoService {
     const dadosPromocao: any = {};
     let promocaoFoiAtivada = false;
 
-    if (updatePromocaoDto.promocaoAtiva !== undefined) {
-      dadosPromocao.promocaoAtiva = updatePromocaoDto.promocaoAtiva;
-      if (updatePromocaoDto.promocaoAtiva === true && !produtoAtual?.promocaoAtiva) {
+    if (updatePromocaoDto.promocao_ativa !== undefined) {
+      dadosPromocao.promocao_ativa = updatePromocaoDto.promocao_ativa;
+      if (updatePromocaoDto.promocao_ativa === true && !produtoAtual?.promocao_ativa) {
+        promocaoFoiAtivada = true;
+      }
+    } else if (updatePromocaoDto.promocaoAtiva !== undefined) {
+      dadosPromocao.promocao_ativa = updatePromocaoDto.promocaoAtiva;
+      if (updatePromocaoDto.promocaoAtiva === true && !produtoAtual?.promocao_ativa) {
         promocaoFoiAtivada = true;
       }
     }
-    if (updatePromocaoDto.precoPromocional !== undefined) {
-      dadosPromocao.precoPromocional = updatePromocaoDto.precoPromocional;
+    
+    if (updatePromocaoDto.preco_promocional !== undefined) {
+      dadosPromocao.preco_promocional = updatePromocaoDto.preco_promocional;
+    } else if (updatePromocaoDto.precoPromocional !== undefined) {
+      dadosPromocao.preco_promocional = updatePromocaoDto.precoPromocional;
     }
+    
     if (updatePromocaoDto.desconto !== undefined) {
       dadosPromocao.desconto = updatePromocaoDto.desconto;
-      if (updatePromocaoDto.desconto > 0 && !produtoAtual?.promocaoAtiva) {
+      if (updatePromocaoDto.desconto > 0 && !produtoAtual?.promocao_ativa) {
         promocaoFoiAtivada = true;
       }
     }
@@ -487,12 +502,11 @@ export class ProdutoService {
     this.clearCache('produtos:maiores-descontos:*');
     this.clearCache(`produto:slug:${updatedProduto.slug}`);
 
-    // ─── DISPARA NOTIFICAÇÃO SE PROMOÇÃO FOI ATIVADA ───
     if (promocaoFoiAtivada) {
       const desconto = updatePromocaoDto.desconto || produtoAtual?.desconto || 0;
       if (desconto > 0) {
         this.notifyPromotion(id, desconto).catch(err =>
-          this.logger.error(`Erro ao notificar promoção: ${err.message}`)
+          this.logger.error(`Erro ao notificar promoção: ${err instanceof Error ? err.message : String(err)}`)
         );
       }
     }
@@ -500,7 +514,31 @@ export class ProdutoService {
     return new ProdutoResponseDto(updatedProduto);
   }
 
-  // ─── NOVO: ATUALIZAÇÃO EM MASSA ───
+  // ─── ATUALIZAR IMAGEM ───
+  async updateImagem(id: string, imagemUrl: string): Promise<ProdutoResponseDto> {
+    if (!this.isValidId(id)) {
+      throw new BadRequestException('ID inválido');
+    }
+    
+    if (!imagemUrl || imagemUrl.trim().length === 0) {
+      throw new BadRequestException('URL da imagem é obrigatória');
+    }
+    
+    this.logger.log(`Atualizando imagem do produto ${id}`);
+    
+    const exists = await this.produtoRepository.exists({ id });
+    if (!exists) {
+      throw new NotFoundException('Produto não encontrado');
+    }
+    
+    const updated = await this.produtoRepository.update(id, { imagem: imagemUrl });
+    this.clearCache(`produto:${id}`);
+    this.clearCache(`produto:slug:${updated.slug}`);
+    
+    return new ProdutoResponseDto(updated);
+  }
+
+  // ─── ATUALIZAÇÃO EM MASSA ───
   async bulkUpdate(ids: string[], updateDto: UpdateProdutoDto): Promise<BulkUpdateResponseDto> {
     this.logger.log(`Atualizando ${ids.length} produtos em massa`);
     
@@ -517,87 +555,12 @@ export class ProdutoService {
         response.detalhes.push({
           id,
           status: 'erro',
-          mensagem: error.message || 'Erro desconhecido'
+          mensagem: error instanceof Error ? error.message : 'Erro desconhecido'
         });
       }
     }
 
     return response;
-  }
-
-  async addImagem(produtoId: string, imagemDto: CreateProdutoImagemDto): Promise<ProdutoImagemResponseDto> {
-    if (!this.isValidId(produtoId)) {
-      throw new BadRequestException('ID do produto inválido');
-    }
-    
-    this.logger.log(`Adicionando imagem ao produto ${produtoId}`);
-    
-    const exists = await this.produtoRepository.exists({ id: produtoId });
-    if (!exists) {
-      throw new NotFoundException('Produto não encontrado');
-    }
-    
-    const existingImagens = await this.prisma.produtoImagem.count({
-      where: { produtoId }
-    });
-    
-    if (existingImagens >= 15) {
-      throw new BadRequestException('Produto já possui o número máximo de imagens (15)');
-    }
-    
-    const isFirstImage = existingImagens === 0;
-    const imagem = await this.produtoRepository.addImagem(produtoId, {
-      url: imagemDto.url,
-      altText: imagemDto.altText || 'Imagem do produto',
-      ordem: imagemDto.ordem !== undefined ? imagemDto.ordem : existingImagens,
-      isPrincipal: imagemDto.isPrincipal || isFirstImage
-    });
-    
-    if (imagem.isPrincipal) {
-      await this.produtoRepository.updateImagemPrincipal(produtoId, imagem.id);
-    }
-    
-    this.clearCache(`produto:${produtoId}`);
-    this.clearCache(`produto:slug:*`);
-    
-    return new ProdutoImagemResponseDto(imagem);
-  }
-
-  async removeImagem(imagemId: string): Promise<void> {
-    if (!this.isValidId(imagemId)) {
-      throw new BadRequestException('ID da imagem inválido');
-    }
-    
-    this.logger.log(`Removendo imagem ${imagemId}`);
-    
-    const imagem = await this.prisma.produtoImagem.findUnique({
-      where: { id: imagemId },
-      select: { produtoId: true }
-    });
-    
-    if (imagem) {
-      await this.produtoRepository.removeImagem(imagemId);
-      this.clearCache(`produto:${imagem.produtoId}`);
-    } else {
-      throw new NotFoundException('Imagem não encontrada');
-    }
-  }
-
-  async setImagemPrincipal(produtoId: string, imagemId: string): Promise<void> {
-    if (!this.isValidId(produtoId) || !this.isValidId(imagemId)) {
-      throw new BadRequestException('IDs inválidos');
-    }
-    
-    this.logger.log(`Definindo imagem ${imagemId} como principal do produto ${produtoId}`);
-    
-    const exists = await this.produtoRepository.exists({ id: produtoId });
-    if (!exists) {
-      throw new NotFoundException('Produto não encontrado');
-    }
-    
-    await this.produtoRepository.updateImagemPrincipal(produtoId, imagemId);
-    
-    this.clearCache(`produto:${produtoId}`);
   }
 
   async updateEstoque(id: string, quantidade: number): Promise<ProdutoResponseDto> {
@@ -717,7 +680,7 @@ export class ProdutoService {
     return tamanhos;
   }
 
-  // ─── NOTIFY PROMOTION (MELHORADO) ───
+  // ─── NOTIFY PROMOTION ───
   async notifyPromotion(produtoId: string, desconto: number, mensagemPersonalizada?: string): Promise<void> {
     if (!this.isValidId(produtoId)) {
       throw new BadRequestException('ID do produto inválido');
@@ -732,8 +695,7 @@ export class ProdutoService {
       throw new NotFoundException('Produto não encontrado');
     }
     
-    // Verifica se o produto realmente está em promoção
-    if (!produto.promocaoAtiva) {
+    if (!produto.promocao_ativa) {
       this.logger.warn(`Produto ${produtoId} não está com promoção ativa`);
       return;
     }
@@ -761,19 +723,38 @@ export class ProdutoService {
         tipo: 'promo',
         titulo: `🔥 ${desconto}% DE DESCONTO!`,
         mensagem: mensagem,
-        dados: {
-          produtoId: produto.id,
-          produtoSlug: produto.slug,
-          desconto: desconto,
-          precoOriginal: valorOriginal,
-          precoComDesconto: valorComDesconto,
-        }
-      }).catch(err => this.logger.error(`Erro notificar ${client.id}: ${err.message}`))
+      }).catch(err => this.logger.error(`Erro notificar ${client.id}: ${err instanceof Error ? err.message : String(err)}`))
     );
     
     await Promise.allSettled(notifyPromises);
     
     this.logger.log(`Notificados ${notifyPromises.length} clientes sobre a promoção do produto ${produto.nome}`);
+  }
+
+  // ─── UTILITÁRIOS ───
+  private getCategoriaEnum(categoria: string): CategoriaProduto {
+    const categoriaMap: Record<string, CategoriaProduto> = {
+      'masculino': CategoriaProduto.Masculino,
+      'feminino': CategoriaProduto.Feminino,
+      'acessorios': CategoriaProduto.Acessorios,
+    };
+  
+    const normalized = categoria.toLowerCase().trim();
+    const enumValue = categoriaMap[normalized];
+  
+    if (enumValue) {
+      return enumValue;
+    }
+  
+    // Tenta bater diretamente com um valor válido do enum
+    const validValues = Object.values(CategoriaProduto);
+    if (validValues.includes(categoria as CategoriaProduto)) {
+      return categoria as CategoriaProduto;
+    }
+  
+    throw new BadRequestException(
+      `Categoria inválida: "${categoria}". Valores aceitos: Feminino, Masculino, Acessorios`
+    );
   }
 
   private isValidId(id: string): boolean {
@@ -831,11 +812,8 @@ export class ProdutoService {
           tipo: 'limitado',
           titulo: '✨ NOVIDADE NA COLEÇÃO!',
           mensagem: `Novo produto: ${produto.nome} - ${valorFormatado}`,
-          dados: {
-            produtoId: produto.id,
-            produtoSlug: produto.slug,
-          }
-        }).catch(err => this.logger.error(`Erro notificar: ${err.message}`))
+          
+        }).catch(err => this.logger.error(`Erro notificar: ${err instanceof Error ? err.message : String(err)}`))
       );
       
       await Promise.allSettled(notifyPromises);
